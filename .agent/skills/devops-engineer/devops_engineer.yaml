@@ -1,0 +1,171 @@
+project:
+  name: openshift-scheduler
+  documentation: DEVOPS_ENGINEER
+  architecture:
+    principles:
+      - Clean Architecture
+      - Modular design
+      - Data security
+      - Separation of concerns
+    layers:
+      presentation: Streamlit
+      business_logic: OR-Tools
+      data_layer: Supabase
+
+file_system:
+  root: openshift-scheduler
+  structure:
+    gitignore:
+      description: "Esclusioni Git (venv, secrets)"
+    readme:
+      description: "Documentazione onboarding"
+    requirements:
+      description: "Dipendenze produzione"
+    streamlit:
+      path: ".streamlit/"
+      secrets_file: "secrets.toml"
+      commit_allowed: false
+    venv:
+      description: "Ambiente virtuale locale"
+    src:
+      entry_point: "main.py"
+      packages:
+        models:
+          description: "Data domain layer"
+          files:
+            - employee.py
+            - shift.py
+        database:
+          description: "Infrastructure layer (Supabase)"
+          files:
+            - client.py
+            - repository.py
+        engine:
+          description: "Business logic (OR-Tools)"
+          files:
+            - solver.py
+            - constraints.py
+            - objectives.py
+        ui:
+          description: "Presentation layer (Streamlit views)"
+          files:
+            - components.py
+            - styles.py
+            - view_admin.py
+            - view_roster.py
+
+environment:
+  prerequisites:
+    python: ">=3.10"
+    git: required
+  setup_steps:
+    - create_virtualenv: "python -m venv venv"
+    - activate_windows: ".\\venv\\Scripts\\activate"
+    - activate_unix: "source venv/bin/activate"
+    - upgrade_pip: "pip install --upgrade pip"
+    - install_dependencies: "pip install -r requirements.txt"
+
+dependencies:
+  streamlit: ">=1.30.0"
+  supabase: ">=2.3.0"
+  ortools: ">=9.8.0"
+  pandas: ">=2.1.0"
+  python-dotenv: ">=1.0.0"
+  plotly: ">=5.18.0"
+  xlsxwriter: ">=3.1.0"
+  watchdog:
+    version: ">=3.0.0"
+    optional: true
+
+security:
+  secrets_management:
+    policy: "No secrets in .py files"
+    local:
+      file: ".streamlit/secrets.toml"
+      supabase:
+        url: "ENV_VAR"
+        key: "ENV_VAR"
+      admin:
+        password: "ENV_VAR"
+    production:
+      platform: "Streamlit Community Cloud"
+      location: "Advanced Settings -> Secrets"
+  gitignore_required:
+    - "__pycache__/"
+    - "*.py[cod]"
+    - "*.so"
+    - ".env"
+    - ".venv"
+    - "env/"
+    - "venv/"
+    - "ENV/"
+    - ".streamlit/secrets.toml"
+    - ".idea/"
+    - ".vscode/"
+    - ".DS_Store"
+
+database:
+  provider: Supabase
+  engine: PostgreSQL
+  orm: none
+  tables:
+    employees:
+      id: "UUID PRIMARY KEY"
+      matricola: "TEXT UNIQUE NOT NULL"
+      nome_cognome: "TEXT NOT NULL"
+      ruolo: ["INF", "OSS"]
+      team_id: "INTEGER"
+      limitazione_notte: "BOOLEAN DEFAULT FALSE"
+      attivo: "BOOLEAN DEFAULT TRUE"
+      created_at: "TIMESTAMPTZ DEFAULT NOW()"
+
+    shift_types:
+      codice: "TEXT PRIMARY KEY"
+      peso_orario: "NUMERIC(4,2)"
+      descrizione: "TEXT"
+      default_values:
+        - { codice: "1", peso_orario: 7.25, descrizione: "Mattina" }
+        - { codice: "K", peso_orario: 7.25, descrizione: "Pomeriggio" }
+        - { codice: "N", peso_orario: 10.25, descrizione: "Notte" }
+        - { codice: "S", peso_orario: 0.0, descrizione: "Smonto" }
+        - { codice: "R", peso_orario: 0.0, descrizione: "Riposo" }
+        - { codice: "F", peso_orario: 6.0, descrizione: "Ferie" }
+        - { codice: "M", peso_orario: 6.0, descrizione: "Malattia" }
+        - { codice: "104", peso_orario: 6.0, descrizione: "Legge 104" }
+        - { codice: "P", peso_orario: 6.0, descrizione: "Permesso" }
+
+    roster:
+      id: "BIGINT IDENTITY PRIMARY KEY"
+      employee_id: "UUID REFERENCES employees(id)"
+      data: "DATE NOT NULL"
+      shift_code: "TEXT REFERENCES shift_types(codice)"
+      is_locked: "BOOLEAN DEFAULT FALSE"
+      unique_constraint: ["employee_id", "data"]
+
+    requests:
+      id: "BIGINT IDENTITY PRIMARY KEY"
+      employee_id: "UUID REFERENCES employees(id)"
+      data_inizio: "DATE NOT NULL"
+      data_fine: "DATE NOT NULL"
+      tipo: ["Ferie", "Malattia", "104", "Permesso"]
+      stato: "TEXT DEFAULT 'Approvato'"
+      created_at: "TIMESTAMPTZ DEFAULT NOW()"
+
+ci_cd:
+  deployment:
+    trigger: "Push su branch main"
+    platform: "Streamlit Cloud"
+    build:
+      - "Provision container"
+      - "pip install -r requirements.txt"
+    run_command: "streamlit run src/main.py"
+  first_deploy:
+    repository_branch: "main"
+    main_file_path: "src/main.py"
+    secrets_required: true
+
+testing:
+  environment_check:
+    test_file: "src/main.py"
+    expected_output: "Environment check: OK"
+    run_command: "streamlit run src/main.py"

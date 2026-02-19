@@ -1,0 +1,183 @@
+product:
+  name: "OpenShift Scheduler"
+  acronym: "OSS-Manager"
+
+  vision:
+    statement: >
+      Liberare i coordinatori infermieristici dai fogli Excel e dai calcoli manuali,
+      garantendo turni equi, legali e trasparenti con un solo click.
+    core_value: "Automazione Intelligente, Controllo Umano"
+    principle: >
+      L'algoritmo gestisce calcoli e incastri; l'Admin mantiene il controllo finale.
+
+personas:
+
+  - name: "Elena"
+    role: "Coordinatrice"
+    type: "Admin"
+    goals:
+      - "Generare il turno mensile in meno di 30 minuti"
+    pain_points:
+      - "Errori manuali (es. doppio turno)"
+      - "Calcolo manuale monte ore"
+      - "Percezione di favoritismi"
+    needs:
+      - "Bottone Genera"
+      - "Rispetto automatico regole legali (11h riposo)"
+      - "Modifica manuale celle con feedback immediato sul monte ore"
+
+  - name: "Marco"
+    role: "Infermiere/OSS"
+    type: "Observer"
+    goals:
+      - "Sapere quando lavora per organizzare la vita privata"
+    pain_points:
+      - "Turni pubblicati in ritardo"
+      - "Troppe notti consecutive"
+      - "Non sapere con chi è in turno"
+    needs:
+      - "Accesso mobile via link"
+      - "Vista completa tabellone"
+      - "Conferma ferie rispettate"
+
+epics:
+
+  - name: "Configurazione & Vincoli"
+    id: "EPIC-1"
+    user_stories:
+
+      - id: "US-1.1"
+        title: "Gestione Staff & Triplette"
+        actor: "Admin"
+        requirement: >
+          Assegnare ogni dipendente a una Tripletta (A, B, C...)
+          per definire il ciclo naturale (1-K-N-S-R).
+
+      - id: "US-1.2"
+        title: "Gestione Assenze"
+        actor: "Admin"
+        requirement: >
+          Inserire Ferie, Malattie e 104 prima della generazione.
+        rules:
+          malattia_104: "Inamovibili"
+          ferie: "Sacrificabili solo con penalità massima se necessario"
+
+  - name: "Motore di Generazione"
+    id: "EPIC-2"
+    user_stories:
+
+      - id: "US-2.1"
+        title: "Copertura Minima"
+        type: "Hard Constraint"
+        requirement: >
+          Mai proporre un turno sotto il minimo di copertura
+          salvo insufficienza reale di personale.
+        fallback: "Alert"
+
+      - id: "US-2.2"
+        title: "Obiettivo Orario Mensile"
+        requirement: >
+          Portare il saldo ore nel range Target ±5h.
+        logic:
+          debito_ore: "Assegnare turno extra rompendo Tripletta"
+          credito_ore: "Assegnare riposo extra"
+          reset_mensile: true
+
+      - id: "US-2.3"
+        title: "Matrice Ideale"
+        requirement: >
+          In assenza di vincoli, rispettare rigorosamente sequenza Tripletta (1-K-N-S-R).
+
+  - name: "Gestione & Pubblicazione"
+    id: "EPIC-3"
+    user_stories:
+
+      - id: "US-3.1"
+        title: "Griglia Interattiva"
+        actor: "Admin"
+        requirement: "Visualizzazione tipo Excel colorato"
+
+      - id: "US-3.2"
+        title: "God Mode"
+        actor: "Admin"
+        requirement: "Modifica manuale celle"
+        feedback:
+          violation_warning: true
+          allow_override: true
+
+      - id: "US-3.3"
+        title: "Visualizzazione Pubblica"
+        actor: "Observer"
+        requirement: "Accesso read-only alla matrice completa"
+
+business_logic:
+
+  target_calculation:
+    formula: "(GiorniNelMese - DomenicheEFestivi) * 6.0"
+
+  saldo_calculation:
+    formula: "(SommaOreLavorate + SommaOreAssenzaRetribuita) - Target"
+
+  hours_definition:
+    worked_hours:
+      mattina: 7.25
+      pomeriggio: 7.25
+      notte: 10.25
+    paid_absence_hours:
+      ferie: 6
+      permesso: 6
+      malattia: 6
+      legge_104: 6
+
+  algorithm_objective:
+    goal: "Minimizzare valore assoluto del saldo"
+    tolerance_range:
+      min: -5
+      max: 5
+
+mvp:
+
+  database:
+    required_tables:
+      - dipendenti
+      - turni
+      - assenze
+    provider: "Supabase"
+
+  algorithm_v1:
+    constraints:
+      - "Rispetto Tripletta"
+      - "Rispetto minimi copertura"
+      - "No notti consecutive"
+      - "No mattina dopo notte"
+
+  frontend_admin:
+    features:
+      - "Input assenze"
+      - "Bottone Genera"
+      - "Griglia modificabile"
+      - "Pannello Totale Ore vs Target"
+
+  frontend_observer:
+    features:
+      - "Pagina sola lettura griglia"
+
+  excluded_features:
+    - "Riporto ore mesi precedenti"
+    - "Login utenti differenziati"
+    - "Statistiche annuali avanzate"
+    - "Notifiche email/SMS"
+
+definition_of_done:
+
+  performance:
+    generation_time_seconds_max: 180
+
+  hard_constraints:
+    no_violations_if_possible: true
+
+  balance_requirement:
+    saldo_within_tolerance: true
+    tolerance_range:
+      min: -5
+      max: 5

@@ -1,0 +1,150 @@
+security:
+
+  document:
+    name: "SECURITY_ENGINEER"
+    objective: >
+      Garantire la confidenzialità dei dati sanitari (GDPR),
+      l'integrità dei turni e la tracciabilità delle azioni amministrative.
+    approach: "Defense in Depth"
+    layers:
+      - "Identità (Auth)"
+      - "Database (RLS)"
+      - "Applicazione (Masking)"
+    status: "Approvato per sviluppo"
+
+  identity_and_access_management:
+
+    provider: "Supabase Auth"
+    authentication_method: "Email/Password"
+    tier: "Free (fino a 50k MAU)"
+    registration_policy: "Invite Only"
+    open_signup: false
+
+    roles:
+      admin:
+        permissions: "Scrittura completa"
+      observer:
+        permissions: "Sola lettura"
+        masking_required: true
+
+    role_management:
+      method:
+        - "Custom Claims"
+        - "Tabella profiles collegata a auth.users"
+
+  database_hardening:
+
+    row_level_security:
+      enabled_tables:
+        - roster
+        - employees
+
+      policies:
+
+        read_policy:
+          name: "Enable read access for all authenticated users"
+          table: "roster"
+          action: "SELECT"
+          role: "authenticated"
+          condition: "true"
+
+        write_policy:
+          name: "Enable write access for admin only"
+          table: "roster"
+          action: "ALL"
+          role: "authenticated"
+          condition: >
+            auth.jwt() ->> 'email' = 'email.del.caposala@ospedale.it'
+          check_condition: >
+            auth.jwt() ->> 'email' = 'email.del.caposala@ospedale.it'
+          note: "Esempio MVP semplificato"
+
+  data_privacy:
+
+    regulation_reference: "GDPR Art. 9"
+
+    frontend_masking_rule:
+      sensitive_shift_codes:
+        - "M"
+        - "104"
+      non_sensitive_shift_codes:
+        - "F"
+        - "P"
+
+      behavior:
+        observer_view:
+          sensitive_display: "ASS"
+          sensitive_color: "Grigio neutro"
+          non_sensitive_display: "Codice reale"
+        admin_view:
+          display_all: true
+
+    implementation_hint:
+      function: "render_roster(user_role)"
+      logic:
+        condition: "role != 'admin' AND shift_code IN ['M','104']"
+        result_if_true: "display_code = 'ASS'"
+        result_if_false: "display_code = shift_code"
+
+  audit_logging:
+
+    purpose: "Tracciabilità completa modifiche turni"
+
+    table_schema:
+      name: "audit_logs"
+      fields:
+        id: "BIGINT IDENTITY PRIMARY KEY"
+        user_id: "UUID REFERENCES auth.users(id)"
+        action_type: "TEXT NOT NULL"
+        target_resource: "TEXT"
+        old_value: "TEXT"
+        new_value: "TEXT"
+        timestamp: "TIMESTAMPTZ DEFAULT NOW()"
+
+    rls:
+      enabled: true
+      policies:
+        admin_read:
+          action: "SELECT"
+          condition: "auth.jwt() ->> 'email' = 'admin@email.it'"
+        system_insert:
+          action: "INSERT"
+          condition: "true"
+        update_delete_allowed: false
+
+  application_security:
+
+    secrets_management:
+      local_storage: ".streamlit/secrets.toml"
+      production_storage: "Streamlit Cloud Secrets Panel"
+      never_commit: true
+
+      critical_variables:
+        - "SUPABASE_URL"
+        - "SUPABASE_KEY (anon)"
+      forbidden_in_frontend:
+        - "service_role key"
+
+    production_config:
+      file: ".streamlit/config.toml"
+      settings:
+        client:
+          showErrorDetails: false
+          toolbarMode: "viewer"
+
+  incident_response_plan:
+
+    data_breach:
+      action:
+        - "Revocare chiavi API"
+        - "Rigenerare chiavi dal pannello Supabase"
+
+    critical_bug_roster:
+      fallback_procedure:
+        - "Rollback manuale"
+        - "Ripristino PDF stampato"
+
+    compromised_account:
+      action:
+        - "Bloccare o bannare utente"
+        - "Gestione dal pannello Authentication Supabase"

@@ -1,0 +1,199 @@
+software_engineering:
+
+  document:
+    name: "SOFTWARE_ENGINEER"
+    purpose: >
+      Definire il disegno tecnico dettagliato:
+      interazione oggetti, implementazione solver,
+      gestione stato applicazione.
+    status: "Design tecnico definito"
+
+  architecture:
+
+    pattern: "Layered Architecture (adattata a Streamlit)"
+    rationale: >
+      Streamlit esegue tutto in un unico script Python.
+      La separazione logica è necessaria per evitare accoppiamento.
+
+    layers:
+
+      presentation_layer:
+        responsibility:
+          - "Gestione input utente"
+          - "Visualizzazione dati"
+        forbidden:
+          - "Calcoli business"
+          - "Accesso diretto al DB"
+
+      service_layer:
+        responsibility:
+          - "Orchestrazione logica"
+          - "Chiamate a repository"
+          - "Istanziazione solver"
+          - "Gestione sessione"
+        role: "Controller"
+
+      domain_layer:
+        responsibility:
+          - "Classi pure (Employee, Shift)"
+          - "Regole business (es. saldo ore)"
+
+      data_layer:
+        responsibility:
+          - "Accesso Supabase"
+          - "CRUD"
+        pattern: "Repository"
+
+  domain_model:
+
+    employee:
+      type: "dataclass"
+      fields:
+        id: "str"
+        matricola: "str"
+        nome: "str"
+        ruolo: ["INF", "OSS"]
+        team_id: "int (1-5)"
+        limitazione_notte: "bool"
+      computed_properties:
+        target_hours_mensile:
+          formula: "giorni_lavorativi * 6.0"
+
+    shift:
+      type: "dataclass (frozen)"
+      role: "Value Object"
+      fields:
+        code: "str"
+        weight: "float"
+        is_absence: "bool"
+
+    roster_entry:
+      type: "dataclass"
+      description: "Atomo calendario"
+      fields:
+        employee_id: "str"
+        date: "date"
+        shift_code: "str"
+        is_locked: "bool"
+
+  solver_engineering:
+
+    paradigm: "Constraint Programming (CP-SAT)"
+    library: "Google OR-Tools"
+
+    decision_variables:
+      structure: "Boolean 3D matrix"
+      dimensions:
+        - employee
+        - day
+        - shift_type
+      meaning: >
+        x[e,d,s] = 1 se dipendente e lavora turno s nel giorno d
+
+    constraints:
+
+      exactly_one_shift_per_day:
+        type: "Hard"
+        formula: >
+          Per ogni dipendente e giorno:
+          somma_s x[e,d,s] = 1
+
+      minimum_coverage:
+        type: "Hard"
+        description: >
+          Per ogni giorno e turno,
+          somma_e x[e,d,s] >= minimo richiesto
+
+      tripletta_rotation:
+        type: "Soft"
+        function: "get_ideal_shift(team_id, date)"
+        penalty: "P se shift != ideale"
+
+      no_morning_after_night:
+        type: "Hard"
+        rule: >
+          Se x[e,d,'N'] = 1 allora x[e,d+1,'1'] = 0
+
+    solver_interface:
+
+      class_name: "ShiftSolver"
+      constructor_inputs:
+        - "employees: List[Employee]"
+        - "days: List[date]"
+      methods:
+        add_hard_constraints:
+          input: "min_coverage: dict"
+        add_soft_constraints:
+          input: "ideal_matrix: dict"
+        solve:
+          output: "List[RosterEntry]"
+          exception: "InfeasibleException"
+
+  state_management:
+
+    framework: "Streamlit"
+    problem: >
+      Streamlit ricarica l'intera pagina a ogni interazione.
+
+    pattern: "Singleton State Manager"
+
+    state_keys:
+      roster_cache: "List[RosterEntry] or None"
+      employees: "List[Employee]"
+
+    loading_strategy:
+      rule: >
+        Chiamare repository solo se cache vuota.
+
+  sequence_diagram_generate_roster:
+
+    steps:
+      - step: 1
+        actor: "Admin"
+        action: "Click GENERA"
+
+      - step: 2
+        actor: "Controller"
+        action: "Recupera employees e requests dal DB"
+
+      - step: 3
+        actor: "Controller"
+        action: "Istanzia ShiftSolver"
+
+      - step: 4
+        actor: "Solver"
+        action: "Costruisce modello CP-SAT"
+
+      - step: 5
+        actor: "Solver"
+        action: "Ricerca soluzione (max 180 sec)"
+
+      - step: 6
+        actor: "Solver"
+        action: "Restituisce lista RosterEntry"
+
+      - step: 7
+        actor: "Controller"
+        action: "Salva roster su Supabase (solo non locked)"
+
+      - step: 8
+        actor: "UI"
+        action: "Ricarica dati aggiornati"
+
+  error_handling:
+
+    infeasibility:
+      cause_example: >
+        Copertura minima notte impossibile per troppe assenze.
+      handling_strategy:
+        - "Catturare InfeasibleException"
+        - "Mostrare messaggio chiaro all'Admin"
+        - "Suggerire riduzione vincoli o modifica ferie"
+
+    race_conditions:
+      scenario: "Due admin modificano stesso turno"
+      strategy: "Last Write Wins"
+      mitigation:
+        - "Timestamp Supabase"
+        - "RLS attivo"
+      future_improvement: "Optimistic locking"

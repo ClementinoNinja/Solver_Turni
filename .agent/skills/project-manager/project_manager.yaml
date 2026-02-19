@@ -1,0 +1,204 @@
+project:
+  name: "OpenShift Scheduler"
+  acronym: "OSS-Manager"
+  objective: "Automazione turni ospedalieri con vincoli complessi e costo zero"
+  stakeholders:
+    - role: "Admin"
+      description: "Caposala / Coordinatore"
+    - role: "Observer"
+      description: "Personale sanitario"
+  license:
+    code: "Proprietaria (privato)"
+    libraries: "Open Source"
+  status: "Pianificazione completata - Pronto per sviluppo"
+
+architecture:
+  strategy: "Zero Cost Stack (Free Tier)"
+  components:
+
+    frontend:
+      technology: "Streamlit"
+      language: "Python"
+      reason: "Sviluppo rapido, mobile-friendly, no HTML/CSS/JS manuale"
+
+    backend_logic:
+      language: "Python 3.10+"
+      reason: "Compatibilità OR-Tools e gestione dati complessa"
+
+    database:
+      provider: "Supabase"
+      engine: "PostgreSQL"
+      free_tier_limit: "500MB"
+      features: ["Relazionale", "Real-time"]
+
+    solver_engine:
+      name: "Google OR-Tools"
+      model: "CP-SAT"
+      type: "Constraint Programming"
+
+    hosting:
+      provider: "Streamlit Community Cloud"
+      features:
+        - "Hosting gratuito"
+        - "CI/CD integrato GitHub"
+        - "Supporto repository privati"
+
+    auth_security:
+      methods:
+        - "Streamlit Secrets"
+        - "Supabase Auth"
+      policy: "Credenziali mai nel codice"
+
+database_schema:
+
+  employees:
+    id: "UUID (PK)"
+    matricola: "String (Unique)"
+    nome_cognome: "String"
+    ruolo: ["INF", "OSS"]
+    team_id: "Integer (1-5)"
+    limitazione_notte:
+      type: "Boolean"
+      default: false
+    attivo:
+      type: "Boolean"
+      default: true
+
+  shift_types:
+    codice: ["1", "K", "N", "S", "R", "F", "M", "104", "P"]
+    peso_orario: "Float"
+    descrizione: "String"
+
+  roster:
+    id: "Primary Key"
+    employee_id: "Foreign Key -> employees"
+    data: "Date"
+    shift_code: "Foreign Key -> shift_types"
+    is_locked:
+      type: "Boolean"
+      description: "Se True, non modificabile dal solver"
+
+  requests:
+    id: "Primary Key"
+    employee_id: "Foreign Key -> employees"
+    data_inizio: "Date"
+    data_fine: "Date"
+    tipo: ["Ferie", "Malattia", "104", "Permesso"]
+    stato: ["Richiesto", "Approvato", "Rifiutato"]
+
+algorithm:
+
+  model_type: "CP-SAT"
+  cycle_definition:
+    name: "Matrice Ideale"
+    logic: "Basata su team_id e giorno dell'anno modulo 5"
+    sequence: ["1", "K", "N", "S", "R"]
+    objective: "Soft - seguire matrice"
+    deviation_penalty: true
+
+  constraints:
+
+    hard_constraints:
+      description: "Inviolabili"
+      coverage:
+        mattina:
+          min_INF: 2
+        pomeriggio:
+          min_INF: 2
+        notte:
+          min_INF: 2
+          min_OSS: 1
+      biological_rest:
+        rule: "N -> S obbligatorio"
+      eleven_hours_rule:
+        forbidden_sequence: "K -> 1"
+      health_limitations:
+        limitazione_notte: "Vieta turno N"
+      guaranteed_absences:
+        types: ["Malattia", "104"]
+        locked: true
+
+    soft_constraints:
+      description: "Ottimizzabili tramite penalità"
+      ferie_negate:
+        penalty: 100000
+      permesso_negato:
+        penalty: 50000
+      matrix_break:
+        penalty: 100
+        per_shift: true
+      hour_imbalance:
+        target_hours: 36
+        penalty_per_hour: 10
+      excessive_consecutive_days:
+        threshold: 7
+        penalty: 500
+
+  search_strategy:
+    time_limit_seconds: 60
+    objective: "Minimizzare costo totale"
+    first_solution_stop: false
+
+ui_ux:
+
+  dashboard_input:
+    sidebar:
+      - "Selettore mese/anno"
+      - "Upload assenze CSV/Excel"
+    kpi_panel:
+      - "Giorni scoperti"
+      - "Ferie a rischio"
+    action_button: "GENERA TURNI"
+
+  interactive_roster:
+    component: "st.data_editor"
+    layout:
+      rows: "Dipendenti"
+      columns: "Giorni mese"
+    color_codes:
+      "1": "Giallo"
+      "N": "Blu"
+      "R": "Grigio"
+      "F": "Rosso"
+    manual_edit: true
+    live_validation:
+      example_warning: >
+        Attenzione! Giorno 12 Mattina: Solo 1 Infermiere (Violazione Minimo)
+
+  statistics_export:
+    charts:
+      - "Grafico saldo ore per dipendente"
+    export_formats:
+      - "Excel"
+      - "PDF"
+
+roadmap:
+
+  phase_1:
+    name: "Setup & Data Layer"
+    tasks:
+      - "Creazione repository GitHub privato"
+      - "Setup progetto Supabase"
+      - "Script creazione tabelle"
+      - "CRUD dipendenti in Streamlit"
+
+  phase_2:
+    name: "Motore"
+    tasks:
+      - "Implementazione OR-Tools"
+      - "Traduzione vincoli Tripletta e Copertura"
+      - "Test scenario estremo (Ferragosto)"
+
+  phase_3:
+    name: "Integrazione UI"
+    tasks:
+      - "Collegamento Frontend-Solver"
+      - "Visualizzazione griglia"
+      - "Gestione errori (es. notte scoperta)"
+
+  phase_4:
+    name: "Refinement & Deploy"
+    tasks:
+      - "Export Excel"
+      - "Deploy su Streamlit Community Cloud"
+      - "Test con dati reali mese precedente"
