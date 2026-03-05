@@ -44,10 +44,6 @@ class EmployeeRepository:
             row = response.data[0]
             employee.id = row['id']
             return employee
-        if response.data:
-            row = response.data[0]
-            employee.id = row['id']
-            return employee
         raise Exception("Failed to create employee")
 
     def update_employee(self, employee_id: str, data: dict):
@@ -57,6 +53,14 @@ class EmployeeRepository:
         """
         client = get_supabase_client()
         client.table(self.table_name).update(data).eq("id", employee_id).execute()
+
+    def delete_employee(self, employee_id: str):
+        """
+        Elimina fisicamente un dipendente dal database.
+        (Alternativa: soft-delete impostando attivo=False, ma qui lo eliminiamo per pulizia in pre-prod)
+        """
+        client = get_supabase_client()
+        client.table(self.table_name).delete().eq("id", employee_id).execute()
 
     def get_employee_by_id(self, emp_id: str) -> Optional[Employee]:
         client = get_supabase_client()
@@ -99,13 +103,26 @@ class EmployeeRepository:
 
     def get_requests(self, start_date: str, end_date: str) -> List[dict]:
         """
-        Recupera le assenze/richieste nel periodo.
+        Recupera le assenze/richieste che si sovrappongono al periodo dato.
+        Condizione di overlap: data_inizio <= end_date AND data_fine >= start_date
+        Cattura anche richieste iniziate prima del periodo ma che si estendono in esso.
         """
         client = get_supabase_client()
-        # Filtra per requests che si sovrappongono al periodo, o iniziano nel periodo
-        # Semplificazione: prendiamo quelle che iniziano nel periodo (migliorare logica overlap se serve)
-        response = client.table("requests").select("*").gte("data_inizio", start_date).lte("data_inizio", end_date).execute()
+        response = (
+            client.table("requests")
+            .select("*")
+            .lte("data_inizio", end_date)
+            .gte("data_fine", start_date)
+            .execute()
+        )
         return response.data
+
+    def delete_request(self, request_id: int):
+        """
+        Elimina fisicamente una richiesta o preferenza dal database.
+        """
+        client = get_supabase_client()
+        client.table("requests").delete().eq("id", request_id).execute()
 
     def create_request(self, employee_id: str, request_type: str, start_date: str, end_date: str, note: str = ""):
         """

@@ -125,3 +125,39 @@ def render_employees_view():
                 st.rerun()
             else:
                 st.info("Nessuna modifica rilevata.")
+
+    # 3. Elimina Dipendente
+    st.divider()
+    with st.expander("⚠️ Elimina Dipendente", expanded=False):
+        st.warning("Attenzione: l'eliminazione è irreversibile e potrebbe causare errori nei turni passati associati a questo dipendente.")
+
+        if employees:
+            emp_map = {e.nome_cognome: e.id for e in employees}
+            emp_to_delete = st.selectbox("Seleziona Dipendente da Eliminare", list(emp_map.keys()))
+
+            if st.button("Elimina Definitivamente", type="primary"):
+                st.session_state["_pending_delete_emp"] = emp_map[emp_to_delete]
+                st.session_state["_pending_delete_name"] = emp_to_delete
+
+            # Passo di conferma: appare solo dopo aver premuto il primo bottone
+            if st.session_state.get("_pending_delete_emp"):
+                pending_name = st.session_state["_pending_delete_name"]
+                st.error(f"Sei sicuro di voler eliminare **{pending_name}**? Questa azione non può essere annullata.")
+                col_yes, col_no = st.columns(2)
+                if col_yes.button("Sì, elimina definitivamente", type="primary", key="confirm_delete_emp"):
+                    try:
+                        repo.delete_employee(st.session_state["_pending_delete_emp"])
+                        st.success(f"Dipendente {pending_name} eliminato con successo!")
+                        st.session_state.pop("_pending_delete_emp", None)
+                        st.session_state.pop("_pending_delete_name", None)
+                        state.employees = []
+                        state.load_employees()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Errore durante l'eliminazione: {e}")
+                if col_no.button("Annulla", key="cancel_delete_emp"):
+                    st.session_state.pop("_pending_delete_emp", None)
+                    st.session_state.pop("_pending_delete_name", None)
+                    st.rerun()
+        else:
+            st.info("Nessun dipendente da eliminare.")

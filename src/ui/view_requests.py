@@ -19,7 +19,7 @@ def render_requests_view():
             emp_name = col1.selectbox("Dipendente", list(emp_map.keys()))
             # Update options: Remove DESIDERATA, add Shift preferences
             req_type = col2.selectbox("Tipo Richiesta", [
-                "FERIE", "MALATTIA", "104", 
+                "FERIE", "MALATTIA", "104", "PERMESSO",
                 "Mattina (Pref)", "Pomeriggio (Pref)", "Notte (Pref)"
             ])
             
@@ -53,7 +53,9 @@ def render_requests_view():
     
     # Filter only future requests or current month
     # For now, get all requests from today onwards
-    requests = repo.get_requests(date.today().isoformat(), "2031-12-31")
+    # Mostra richieste da oggi in poi (nessuna data fine hardcodata)
+    far_future = date(date.today().year + 10, 12, 31).isoformat()
+    requests = repo.get_requests(date.today().isoformat(), far_future)
     
     if requests:
         # Convert to easy table
@@ -73,7 +75,20 @@ def render_requests_view():
             
         st.dataframe(table_data, use_container_width=True, hide_index=True)
         
-        # Delete Section (Simple ID input for now or selectbox)
-        st.caption("Pulsante Cancella in sviluppo (richiede ID).")
+        # 3. Elimina Richiesta
+        st.divider()
+        with st.expander("⚠️ Elimina Richiesta", expanded=False):
+            # Map description string to ID
+            req_map = {f"ID: {r['id']} - {emp_id_name.get(r['employee_id'], '')} ({r['tipo_richiesta']} {r['data_inizio']})": r['id'] for r in requests}
+            
+            req_to_delete = st.selectbox("Seleziona Richiesta da Eliminare", list(req_map.keys()))
+            
+            if st.button("Elimina", type="primary"):
+                try:
+                    repo.delete_request(req_map[req_to_delete])
+                    st.success("Richiesta eliminata con successo!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Errore durante l'eliminazione: {e}")
     else:
         st.info("Nessuna richiesta futura.")

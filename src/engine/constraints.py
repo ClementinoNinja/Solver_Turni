@@ -1,4 +1,9 @@
 from ortools.sat.python import cp_model
+from datetime import date as _date
+
+# Data di ancoraggio del ciclo tripletta: il giorno 0 corrisponde al turno '1' per il team 1.
+# CALIBRARE con il responsabile turni se il ciclo non è allineato.
+CYCLE_ANCHOR_DATE = _date(2026, 1, 5)
 
 class ConstraintsManager:
     def __init__(self, model: cp_model.CpModel, shifts: dict, employees: list, days: list, work: dict):
@@ -32,6 +37,17 @@ class ConstraintsManager:
         """
         inf_employees = [e for e in self.employees if e.ruolo == 'INF']
         oss_employees = [e for e in self.employees if e.ruolo == 'OSS']
+
+        if not inf_employees:
+            raise ValueError(
+                "Nessun dipendente con ruolo INF trovato: impossibile soddisfare i vincoli di copertura. "
+                "Aggiungere almeno 3 dipendenti INF attivi."
+            )
+        if not oss_employees:
+            raise ValueError(
+                "Nessun dipendente con ruolo OSS trovato: impossibile soddisfare i vincoli di copertura. "
+                "Aggiungere almeno 1 dipendente OSS attivo."
+            )
         
         for d in self.days:
             date_str = d.strftime("%Y-%m-%d")
@@ -65,8 +81,24 @@ class ConstraintsManager:
                 inf_sum_n = sum(self.work[e.id, date_str, 'N'] for e in inf_employees)
                 oss_sum_n = sum(self.work[e.id, date_str, 'N'] for e in oss_employees)
                 
+                
                 self.model.Add(inf_sum_n >= 2)
                 self.model.Add(oss_sum_n >= 1)
+
+    def add_max_shift_capacity(self, max_capacity: int = 5):
+        """
+        Hard Constraint: Non ci possono essere più di `max_capacity` persone assegnate
+        allo stesso turno (Mattina, Pomeriggio, Notte).
+        """
+        for d in self.days:
+            date_str = d.strftime("%Y-%m-%d")
+            
+            # Controlla solo i turni operativi, ignorando Riposo (R), Smonto (S) e assenze
+            operational_shifts = ['1', 'K', 'N']
+            for shift_code in operational_shifts:
+                if shift_code in self.shifts:
+                    shift_sum = sum(self.work[e.id, date_str, shift_code] for e in self.employees)
+                    self.model.Add(shift_sum <= max_capacity)
 
     def add_no_morning_after_night(self):
         """
@@ -93,7 +125,18 @@ class ConstraintsManager:
         Se ieri non era N, oggi non può essere S.
         Logica: work[today, 'S'] implies work[yesterday, 'N']
         Equivalente: work[today, 'S'] <= work[yesterday, 'N']
+        Per il primo giorno del periodo non conosciamo il giorno precedente:
+        S viene vietato per evitare smonto non preceduto da notte.
         """
+        if not self.days:
+            return
+
+        # Giorno 0: impossibile verificare il giorno precedente -> vieta S
+        if 'S' in self.shifts:
+            day0_str = self.days[0].strftime("%Y-%m-%d")
+            for emp in self.employees:
+                self.model.Add(self.work[emp.id, day0_str, 'S'] == 0)
+
         # Itera dal secondo giorno in poi
         for i in range(1, len(self.days)):
             today = self.days[i]
@@ -135,16 +178,14 @@ class ConstraintsManager:
             if emp.team_id is None:
                 continue # Skip employees without team/tripletta
             
-            # TODO: Calcolare offset corretto basato sul team_id e data
-            # Per ora assumiamo un offset semplice basato solo su team_id
-            # team_id 1 -> offset 0, team_id 2 -> offset 1, etc.
+            # Offset basato su team_id: team 1 -> offset 0, team 2 -> offset 1, etc.
             offset = (emp.team_id - 1) % 5
-            
+
             for d in self.days:
                 date_str = d.strftime("%Y-%m-%d")
-                # Calcolo indice ciclo: (giorno dell'anno o ordinale) + offset
-                # Usiamo toordinal() per semplicità
-                day_index = (d.toordinal() + offset) % 5
+                # Calcolo indice ciclo relativo a CYCLE_ANCHOR_DATE (non all'ordinale assoluto).
+                # Il giorno 0 = CYCLE_ANCHOR_DATE corrisponde al turno '1' per il team 1.
+                day_index = ((d - CYCLE_ANCHOR_DATE).days + offset) % 5
                 ideal_shift = cycle_map.get(day_index)
                 
                 if ideal_shift and ideal_shift in self.shifts:
@@ -189,18 +230,26 @@ class ConstraintsManager:
             'Notte (Pref)': 'N'
         }
         
+        # Set di emp_id validi nel solver per evitare KeyError su dipendenti non attivi
+        valid_emp_ids = {emp.id for emp in self.employees}
+
         for req in requests:
             emp_id = req['employee_id']
+
+            # Salta richieste di dipendenti non presenti nel solver (es. disattivati)
+            if emp_id not in valid_emp_ids:
+                continue
+
             # Find dates
             start = date.fromisoformat(req['data_inizio'])
             end = date.fromisoformat(req['data_fine'])
-            
+
             # Iterate days in solver range
             for d in self.days:
                 if start <= d <= end:
                     date_str = d.strftime("%Y-%m-%d")
                     req_type = req['tipo_richiesta']
-                    
+
                     # 1. Gestione Assenze Codificate (Hard Constraint)
                     if req_type in type_to_shift:
                         forced_shift = type_to_shift[req_type]

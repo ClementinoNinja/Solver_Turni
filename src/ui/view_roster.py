@@ -106,33 +106,18 @@ def render_roster_view(is_admin: bool = False):
     # df columns are days (01, 02...). Values are shift codes.
     
     coverage_data = []
-    
+
+    # Mappa Nome -> Ruolo costruita una volta sola fuori dal loop
+    name_to_role = {e.nome_cognome: e.ruolo for e in state.employees}
+
     # We iterate over day_cols which corresponds to the days in the month
     for day_str in day_cols:
-        col_values = df[day_str].values
-        
-        # Count occurrences by Role
-        # We need to map back from Name -> Role (or use the roster data directly if easier, but df has names/codes)
-        # DF contains Shift Codes. Index is Name.
-        # Let's iterate rows of the DF.
-        
         inf_1, oss_1 = 0, 0
         inf_K, oss_K = 0, 0
         inf_N, oss_N = 0, 0
-        
+
         for emp_name, shift_code in df[day_str].items():
-            # lookup role
-            # emp_name is key in grid_data, but we need ID or Object.
-            # let's assume emp_name is unique or use a map
-            # We built grid_data[emp.nome_cognome]
-            # Need map: Name -> Role
-            pass
-            
-        # Optimization: Build Name->Role map outside loop
-        name_to_role = {e.nome_cognome: e.ruolo for e in state.employees}
-        
-        for emp_name, shift_code in df[day_str].items():
-            role = name_to_role.get(emp_name, 'INF') # default
+            role = name_to_role.get(emp_name, 'INF')
             
             if shift_code == '1':
                 if role == 'INF': inf_1 += 1
