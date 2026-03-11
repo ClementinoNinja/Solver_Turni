@@ -1,4 +1,3 @@
-from typing import List
 from ortools.sat.python import cp_model
 
 class ObjectiveFunction:
@@ -54,5 +53,4 @@ class ObjectiveFunction:
             
             # Penalità
             # Se lo scarto è 1 ora (100 punti), penalità 500.
-            if self.penalties is None: self.penalties = []
             self.penalties.append(abs_diff * 5)

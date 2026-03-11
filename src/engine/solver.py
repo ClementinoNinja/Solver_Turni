@@ -35,7 +35,7 @@ class ShiftSolver:
         self.constraints_manager.add_night_limitation_constraint()
         # Apply requests constraints
         if self.requests:
-             self.constraints_manager.add_request_constraints(self.requests)
+            self.constraints_manager.add_request_constraints(self.requests)
 
     def add_soft_constraints(self):
         # Parametri penalità hardcoded per ora o passati come argomenti

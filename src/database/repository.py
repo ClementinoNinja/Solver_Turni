@@ -2,6 +2,7 @@ from typing import List, Optional
 from src.database.client import get_supabase_client
 from src.models.employee import Employee
 
+
 class EmployeeRepository:
     def __init__(self):
         self.table_name = "employees"
@@ -9,7 +10,7 @@ class EmployeeRepository:
     def get_all_employees(self) -> List[Employee]:
         client = get_supabase_client()
         response = client.table(self.table_name).select("*").eq("attivo", True).execute()
-        
+
         employees = []
         for row in response.data:
             employees.append(Employee(
@@ -18,7 +19,8 @@ class EmployeeRepository:
                 nome_cognome=row['nome_cognome'],
                 ruolo=row['ruolo'],
                 team_id=row['team_id'],
-                limitazione_notte=row['limitazione_notte']
+                limitazione_notte=row['limitazione_notte'],
+                attivo=row.get('attivo', True)
             ))
         return employees
 
@@ -35,7 +37,6 @@ class EmployeeRepository:
             "limitazione_notte": employee.limitazione_notte,
             "attivo": employee.attivo
         }
-        # Se l'ID è presente, lo usiamo (utile per test o restore), altrimenti lascia fare a Supabase
         if employee.id:
             data['id'] = employee.id
 
@@ -57,7 +58,6 @@ class EmployeeRepository:
     def delete_employee(self, employee_id: str):
         """
         Elimina fisicamente un dipendente dal database.
-        (Alternativa: soft-delete impostando attivo=False, ma qui lo eliminiamo per pulizia in pre-prod)
         """
         client = get_supabase_client()
         client.table(self.table_name).delete().eq("id", employee_id).execute()
@@ -67,7 +67,7 @@ class EmployeeRepository:
         response = client.table(self.table_name).select("*").eq("id", emp_id).execute()
         if not response.data:
             return None
-            
+
         row = response.data[0]
         return Employee(
             id=row['id'],
@@ -75,13 +75,13 @@ class EmployeeRepository:
             nome_cognome=row['nome_cognome'],
             ruolo=row['ruolo'],
             team_id=row['team_id'],
-            limitazione_notte=row['limitazione_notte']
+            limitazione_notte=row['limitazione_notte'],
+            attivo=row.get('attivo', True)
         )
 
     def get_roster_by_month(self, start_date: str, end_date: str) -> List[dict]:
         """
         Recupera i turni in un range di date.
-        ritorna una lista di dizionari (o RosterEntry oggetto se creato)
         """
         client = get_supabase_client()
         response = client.table("roster").select("*").gte("data", start_date).lte("data", end_date).execute()
@@ -95,7 +95,7 @@ class EmployeeRepository:
         client = get_supabase_client()
         data = {
             "employee_id": employee_id,
-            "data": date, # Assicurarsi che key corrisponda a colonna DB (data)
+            "data": date,
             "shift_code": shift_code,
             "is_locked": is_locked
         }
@@ -105,7 +105,6 @@ class EmployeeRepository:
         """
         Recupera le assenze/richieste che si sovrappongono al periodo dato.
         Condizione di overlap: data_inizio <= end_date AND data_fine >= start_date
-        Cattura anche richieste iniziate prima del periodo ma che si estendono in esso.
         """
         client = get_supabase_client()
         response = (
@@ -135,6 +134,6 @@ class EmployeeRepository:
             "data_inizio": start_date,
             "data_fine": end_date,
             "note": note,
-            "stato": "APPROVED" # Auto-approve for MVP
+            "stato": "APPROVED"
         }
         client.table("requests").insert(data).execute()

@@ -162,7 +162,7 @@ class ConstraintsManager:
                     date_str = d.strftime("%Y-%m-%d")
                     # Force 'N' assignment to 0
                     if 'N' in self.shifts:
-                         self.model.Add(self.work[emp.id, date_str, 'N'] == 0)
+                        self.model.Add(self.work[emp.id, date_str, 'N'] == 0)
 
     def add_tripletta_constraint(self, objective_function, penalty_cost: int = 100):
         """
@@ -254,7 +254,7 @@ class ConstraintsManager:
                     if req_type in type_to_shift:
                         forced_shift = type_to_shift[req_type]
                         if forced_shift in self.shifts:
-                             self.model.Add(self.work[emp_id, date_str, forced_shift] == 1)
+                            self.model.Add(self.work[emp_id, date_str, forced_shift] == 1)
                     
                     # 2. Gestione Desiderata (Es. Note="M") - Placeholder
                     # Se implementiamo desiderata specifici, qui andrebbe la logica.

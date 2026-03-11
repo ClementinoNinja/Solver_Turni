@@ -42,7 +42,8 @@ def render_employees_view():
 
     # 2. List Employees (Editable)
     st.subheader("Elenco Dipendenti Attivi")
-    state.load_employees()
+    if not state.load_employees_safe():
+        return
     employees = state.employees
     
     if not employees:
@@ -93,8 +94,8 @@ def render_employees_view():
                     updates = {}
                     import math
                     
-                    if row["Matricola"] != original["Matricola"]: 
-                         updates["matricola"] = row["Matricola"]
+                    if row["Matricola"] != original["Matricola"]:
+                        updates["matricola"] = row["Matricola"]
                     if row["Nome"] != original["Nome"]: 
                         updates["nome_cognome"] = row["Nome"]
                     if row["Ruolo"] != original["Ruolo"]: 
@@ -104,9 +105,9 @@ def render_employees_view():
                     if row["Team"] != original["Team"]:
                         val = row["Team"]
                         if val is None or (isinstance(val, float) and math.isnan(val)):
-                             updates["team_id"] = None
+                            updates["team_id"] = None
                         else:
-                             updates["team_id"] = int(val)
+                            updates["team_id"] = int(val)
                              
                     if row["Limitazione Notte"] != original["Limitazione Notte"]: 
                         updates["limitazione_notte"] = row["Limitazione Notte"]

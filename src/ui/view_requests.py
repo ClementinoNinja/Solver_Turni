@@ -8,10 +8,16 @@ def render_requests_view():
     
     repo = EmployeeRepository()
     state = AppState()
-    state.load_employees()
+    if not state.load_employees_safe():
+        return
     employees = state.employees
+
+    if not employees:
+        st.info("Nessun dipendente trovato. Aggiungi dipendenti dalla sezione 'Gestione Dipendenti'.")
+        return
+
     emp_map = {e.nome_cognome: e.id for e in employees}
-    
+
     # 1. Form Inserimento
     with st.expander("Inserisci Nuova Richiesta", expanded=True):
         with st.form("new_request"):
@@ -55,7 +61,11 @@ def render_requests_view():
     # For now, get all requests from today onwards
     # Mostra richieste da oggi in poi (nessuna data fine hardcodata)
     far_future = date(date.today().year + 10, 12, 31).isoformat()
-    requests = repo.get_requests(date.today().isoformat(), far_future)
+    try:
+        requests = repo.get_requests(date.today().isoformat(), far_future)
+    except Exception as e:
+        st.error(f"Errore caricamento richieste: {e}")
+        return
     
     if requests:
         # Convert to easy table

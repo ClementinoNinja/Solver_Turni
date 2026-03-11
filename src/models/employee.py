@@ -23,4 +23,4 @@ class Employee:
         return 0.0
 
     def calculate_target_hours(self, working_days_in_month: int) -> float:
-         return working_days_in_month * 6.0
+        return working_days_in_month * 6.0

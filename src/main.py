@@ -17,7 +17,11 @@ def _check_admin_password(password: str) -> bool:
     """Confronto timing-safe della password admin."""
     if not password:
         return False
-    correct = st.secrets["admin"]["password"]
+    try:
+        correct = st.secrets["admin"]["password"]
+    except (KeyError, FileNotFoundError):
+        st.sidebar.error("Secrets non configurati. Verifica .streamlit/secrets.toml")
+        return False
     return hmac.compare_digest(password.encode(), correct.encode())
 
 
