@@ -29,6 +29,7 @@ class ShiftSolver:
         self.constraints_manager.add_one_shift_per_day()
         # self.constraints_manager.add_min_coverage(min_coverage) # Deprecated Sprint 7
         self.constraints_manager.add_role_coverage()
+        self.constraints_manager.add_max_shift_capacity(5)
         self.constraints_manager.add_no_morning_after_night()
         self.constraints_manager.add_smonto_consistent_constraint()
         self.constraints_manager.add_night_limitation_constraint()

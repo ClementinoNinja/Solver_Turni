@@ -125,3 +125,24 @@ def render_employees_view():
                 st.rerun()
             else:
                 st.info("Nessuna modifica rilevata.")
+
+    # 3. Elimina Dipendente
+    st.divider()
+    with st.expander("⚠️ Elimina Dipendente", expanded=False):
+        st.warning("Attenzione: l'eliminazione è irreversibile e potrebbe causare errori nei turni passati associati a questo dipendente.")
+        
+        if employees:
+            emp_map = {e.nome_cognome: e.id for e in employees}
+            emp_to_delete = st.selectbox("Seleziona Dipendente da Eliminare", list(emp_map.keys()))
+            
+            if st.button("Elimina Definitivamente", type="primary"):
+                try:
+                    repo.delete_employee(emp_map[emp_to_delete])
+                    st.success(f"Dipendente {emp_to_delete} eliminato con successo!")
+                    state.employees = []
+                    state.load_employees()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Errore durante l'eliminazione: {e}")
+        else:
+            st.info("Nessun dipendente da eliminare.")

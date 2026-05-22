@@ -79,17 +79,64 @@ def render_roster_view(is_admin: bool = False):
     
     # 4. Render Editor
     if is_admin:
-        st.caption("Modalità Modifica: Doppio click sulla cella per cambiare il turno.")
-        edited_df = st.data_editor(df, key="roster_editor", use_container_width=True)
-        
-        # Detect Changes (Differenza tra df e edited_df)
+        st.caption("Modalità Modifica: clicca una cella per cambiare il turno. Lascia vuoto per rimuovere.")
+
+        valid_codes = [""] + list(SHIFT_DEFINITIONS.keys())
+        column_config = {
+            day_col: st.column_config.SelectboxColumn(
+                day_col,
+                options=valid_codes,
+                required=False,
+            )
+            for day_col in day_cols
+        }
+
+        edited_df = st.data_editor(
+            df,
+            key=f"roster_editor_{year}_{month}",
+            use_container_width=True,
+            column_config=column_config,
+            disabled=False,
+        )
+
         if not df.equals(edited_df):
-            if st.button("Salva Modifiche"):
-                # TODO: Implementare logica di salvataggio back to DB
-                # Iterare su celle diverse e chiamare repo.save_roster_entry
-                # Richiede mappatura inversa Nome -> ID
-                st.warning("Salvataggio modifiche grid non ancora implementato (Richiede logica diff complessa). Usa 'God Mode' cella singola in futuro.")
-                # Per MVP Grid Edit è complesso. Implementiamo salvataggio dummy o lasciamo view only editable next sprint.
+            if st.button("💾 Salva Modifiche", type="primary"):
+                name_to_id = {e.nome_cognome: e.id for e in state.employees}
+                day_to_date = {d.strftime("%d"): d.strftime("%Y-%m-%d") for d in days}
+
+                changes = 0
+                errors = []
+                for emp_name in edited_df.index:
+                    emp_id = name_to_id.get(emp_name)
+                    if not emp_id:
+                        continue
+                    for day_col in day_cols:
+                        old_val = df.at[emp_name, day_col]
+                        new_val = edited_df.at[emp_name, day_col]
+                        old_val = "" if pd.isna(old_val) else str(old_val).strip()
+                        new_val = "" if pd.isna(new_val) else str(new_val).strip()
+                        if old_val == new_val:
+                            continue
+                        # Non permettere il salvataggio del placeholder di mascheramento
+                        if new_val == "ASS":
+                            errors.append(f"{emp_name} - {day_col}: 'ASS' è un placeholder, non un turno valido.")
+                            continue
+                        date_iso = day_to_date[day_col]
+                        try:
+                            if new_val == "":
+                                repo.delete_roster_entry(emp_id, date_iso)
+                            else:
+                                repo.save_roster_entry(emp_id, date_iso, new_val, is_locked=True)
+                            changes += 1
+                        except Exception as ex:
+                            errors.append(f"{emp_name} - {day_col}: {ex}")
+
+                if changes:
+                    st.success(f"Salvate {changes} modifiche.")
+                if errors:
+                    st.error("Errori durante il salvataggio:\n- " + "\n- ".join(errors))
+                if changes and not errors:
+                    st.rerun()
     else:
         st.caption("Modalità Sola Lettura")
         st.dataframe(df, use_container_width=True)

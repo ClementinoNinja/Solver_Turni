@@ -65,8 +65,24 @@ class ConstraintsManager:
                 inf_sum_n = sum(self.work[e.id, date_str, 'N'] for e in inf_employees)
                 oss_sum_n = sum(self.work[e.id, date_str, 'N'] for e in oss_employees)
                 
+                
                 self.model.Add(inf_sum_n >= 2)
                 self.model.Add(oss_sum_n >= 1)
+
+    def add_max_shift_capacity(self, max_capacity: int = 5):
+        """
+        Hard Constraint: Non ci possono essere più di `max_capacity` persone assegnate
+        allo stesso turno (Mattina, Pomeriggio, Notte).
+        """
+        for d in self.days:
+            date_str = d.strftime("%Y-%m-%d")
+            
+            # Controlla solo i turni operativi, ignorando Riposo (R), Smonto (S) e assenze
+            operational_shifts = ['1', 'K', 'N']
+            for shift_code in operational_shifts:
+                if shift_code in self.shifts:
+                    shift_sum = sum(self.work[e.id, date_str, shift_code] for e in self.employees)
+                    self.model.Add(shift_sum <= max_capacity)
 
     def add_no_morning_after_night(self):
         """

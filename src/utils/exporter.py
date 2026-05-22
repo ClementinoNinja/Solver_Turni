@@ -14,17 +14,34 @@ def to_excel(df: pd.DataFrame, year: int, month: int) -> bytes:
     # 1. Calculate Stats
     # We need to add columns: "Debito Os." (Target), "Ore Eff.", "Saldo"
     
-    # Helper to calc hours
-    def calc_hours(row):
-        total = 0.0
-        for shift_code in row:
-            if shift_code in SHIFT_DEFINITIONS:
-                total += SHIFT_DEFINITIONS[shift_code].weight
-        return total
-
     # Add Stats Columns to a copy
     df_export = df.copy()
     
+    from src.utils.holidays import get_italian_holidays
+    from datetime import date
+    holidays = get_italian_holidays(year)
+    
+    # Helper to calc hours
+    def calc_hours(row):
+        total = 0.0
+        # row index usually corresponds to days ("01", "02", etc.)
+        for col_name, shift_code in row.items():
+            if str(col_name).isdigit(): # Ensure it's a day column
+                day = int(col_name)
+                curr_date = date(year, month, day)
+                is_sunday = (curr_date.weekday() == 6)
+                is_holiday = (curr_date in holidays)
+                
+                if shift_code in SHIFT_DEFINITIONS:
+                    shift = SHIFT_DEFINITIONS[shift_code]
+                    
+                    # Se è un'assenza su giorno festivo/domenica, conta 0
+                    if shift.is_absence and (is_sunday or is_holiday):
+                        total += 0.0
+                    else:
+                        total += shift.weight
+        return total
+
     # Calculate "Ore Effettive"
     df_export['Ore Eff.'] = df.apply(calc_hours, axis=1)
     

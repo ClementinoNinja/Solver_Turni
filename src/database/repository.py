@@ -58,6 +58,14 @@ class EmployeeRepository:
         client = get_supabase_client()
         client.table(self.table_name).update(data).eq("id", employee_id).execute()
 
+    def delete_employee(self, employee_id: str):
+        """
+        Elimina fisicamente un dipendente dal database.
+        (Alternativa: soft-delete impostando attivo=False, ma qui lo eliminiamo per pulizia in pre-prod)
+        """
+        client = get_supabase_client()
+        client.table(self.table_name).delete().eq("id", employee_id).execute()
+
     def get_employee_by_id(self, emp_id: str) -> Optional[Employee]:
         client = get_supabase_client()
         response = client.table(self.table_name).select("*").eq("id", emp_id).execute()
@@ -97,15 +105,27 @@ class EmployeeRepository:
         }
         client.table("roster").upsert(data, on_conflict="employee_id, data").execute()
 
+    def delete_roster_entry(self, employee_id: str, date: str):
+        """
+        Elimina il turno di un dipendente in una specifica data.
+        """
+        client = get_supabase_client()
+        client.table("roster").delete().eq("employee_id", employee_id).eq("data", date).execute()
+
     def get_requests(self, start_date: str, end_date: str) -> List[dict]:
         """
         Recupera le assenze/richieste nel periodo.
         """
         client = get_supabase_client()
-        # Filtra per requests che si sovrappongono al periodo, o iniziano nel periodo
-        # Semplificazione: prendiamo quelle che iniziano nel periodo (migliorare logica overlap se serve)
         response = client.table("requests").select("*").gte("data_inizio", start_date).lte("data_inizio", end_date).execute()
         return response.data
+
+    def delete_request(self, request_id: int):
+        """
+        Elimina fisicamente una richiesta o preferenza dal database.
+        """
+        client = get_supabase_client()
+        client.table("requests").delete().eq("id", request_id).execute()
 
     def create_request(self, employee_id: str, request_type: str, start_date: str, end_date: str, note: str = ""):
         """

@@ -73,7 +73,20 @@ def render_requests_view():
             
         st.dataframe(table_data, use_container_width=True, hide_index=True)
         
-        # Delete Section (Simple ID input for now or selectbox)
-        st.caption("Pulsante Cancella in sviluppo (richiede ID).")
+        # 3. Elimina Richiesta
+        st.divider()
+        with st.expander("⚠️ Elimina Richiesta", expanded=False):
+            # Map description string to ID
+            req_map = {f"ID: {r['id']} - {emp_id_name.get(r['employee_id'], '')} ({r['tipo_richiesta']} {r['data_inizio']})": r['id'] for r in requests}
+            
+            req_to_delete = st.selectbox("Seleziona Richiesta da Eliminare", list(req_map.keys()))
+            
+            if st.button("Elimina", type="primary"):
+                try:
+                    repo.delete_request(req_map[req_to_delete])
+                    st.success("Richiesta eliminata con successo!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Errore durante l'eliminazione: {e}")
     else:
         st.info("Nessuna richiesta futura.")
