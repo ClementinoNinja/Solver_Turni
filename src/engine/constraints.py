@@ -1,17 +1,31 @@
 from ortools.sat.python import cp_model
-from datetime import date as _date
-
-# Data di ancoraggio del ciclo tripletta: il giorno 0 corrisponde al turno '1' per il team 1.
-# CALIBRARE con il responsabile turni se il ciclo non è allineato.
-CYCLE_ANCHOR_DATE = _date(2026, 1, 5)
-
 class ConstraintsManager:
-    def __init__(self, model: cp_model.CpModel, shifts: dict, employees: list, days: list, work: dict):
+    def __init__(self, model: cp_model.CpModel, shifts: dict, employees: list, days: list, work: dict,
+                 locked_roster=None, previous_shifts=None, next_shifts=None, config=None):
+        from src.engine.config import DEFAULT_SOLVER_CONFIG
         self.model = model
         self.shifts = shifts
         self.employees = employees
         self.days = days
         self.work = work # The 3D decision variable matrix work[emp_id, day, shift_code]
+        self.locked_roster = locked_roster or []
+        self.previous_shifts = previous_shifts or {}
+        self.next_shifts = next_shifts or {}
+        self.config = config or DEFAULT_SOLVER_CONFIG
+
+    def add_locked_shift_constraints(self):
+        """Mantiene fisse le assegnazioni che il responsabile ha bloccato."""
+        valid_emp_ids = {emp.id for emp in self.employees}
+        valid_days = {day.isoformat() for day in self.days}
+        for entry in self.locked_roster:
+            emp_id = entry.get('employee_id')
+            day = str(entry.get('data', ''))[:10]
+            code = entry.get('shift_code')
+            if emp_id not in valid_emp_ids or day not in valid_days:
+                continue
+            if code not in self.shifts:
+                raise ValueError(f"Codice turno non configurato per un turno bloccato: {code!r}.")
+            self.model.Add(self.work[emp_id, day, code] == 1)
 
     def add_one_shift_per_day(self):
         """
@@ -53,27 +67,19 @@ class ConstraintsManager:
             date_str = d.strftime("%Y-%m-%d")
             
             # --- Mattina (1) e Pomeriggio (K) ---
-            for shift_code in ['1', 'K']:
+            for shift_code, options in self.config.daytime_coverage.items():
                 if shift_code in self.shifts:
-                    # Sum of INF and OSS for this shift
                     inf_sum = sum(self.work[e.id, date_str, shift_code] for e in inf_employees)
                     oss_sum = sum(self.work[e.id, date_str, shift_code] for e in oss_employees)
-                    
-                    # Logic: (inf >= 2 AND oss >= 2) OR (inf >= 3 AND oss >= 1)
-                    # We can use a boolean variable for each condition or intermediate bools.
-                    
-                    # Cond 1: 2+2
-                    c1 = self.model.NewBoolVar(f'{date_str}_{shift_code}_2inf_2oss')
-                    self.model.Add(inf_sum >= 2).OnlyEnforceIf(c1)
-                    self.model.Add(oss_sum >= 2).OnlyEnforceIf(c1)
-                    
-                    # Cond 2: 3+1
-                    c2 = self.model.NewBoolVar(f'{date_str}_{shift_code}_3inf_1oss')
-                    self.model.Add(inf_sum >= 3).OnlyEnforceIf(c2)
-                    self.model.Add(oss_sum >= 1).OnlyEnforceIf(c2)
-                    
-                    # At least one condition must be true
-                    self.model.AddBoolOr([c1, c2])
+                    alternatives = []
+                    for alternative_index, (min_inf, min_oss) in enumerate(options):
+                        condition = self.model.NewBoolVar(
+                            f'{date_str}_{shift_code}_coverage_{alternative_index}'
+                        )
+                        self.model.Add(inf_sum >= min_inf).OnlyEnforceIf(condition)
+                        self.model.Add(oss_sum >= min_oss).OnlyEnforceIf(condition)
+                        alternatives.append(condition)
+                    self.model.AddBoolOr(alternatives)
             
             # --- Notte (N) ---
             if 'N' in self.shifts:
@@ -82,14 +88,15 @@ class ConstraintsManager:
                 oss_sum_n = sum(self.work[e.id, date_str, 'N'] for e in oss_employees)
                 
                 
-                self.model.Add(inf_sum_n >= 2)
-                self.model.Add(oss_sum_n >= 1)
+                self.model.Add(inf_sum_n >= self.config.night_min_inf)
+                self.model.Add(oss_sum_n >= self.config.night_min_oss)
 
-    def add_max_shift_capacity(self, max_capacity: int = 5):
+    def add_max_shift_capacity(self, max_capacity: int = None):
         """
         Hard Constraint: Non ci possono essere più di `max_capacity` persone assegnate
         allo stesso turno (Mattina, Pomeriggio, Notte).
         """
+        max_capacity = self.config.shift_capacity if max_capacity is None else max_capacity
         for d in self.days:
             date_str = d.strftime("%Y-%m-%d")
             
@@ -119,6 +126,16 @@ class ConstraintsManager:
                     self.work[emp.id, tomorrow_str, '1'] <= 1
                 )
 
+        if self.days:
+            first_day = self.days[0].isoformat()
+            last_day = self.days[-1].isoformat()
+            for emp in self.employees:
+                previous = self.previous_shifts.get(emp.id)
+                if previous == 'N' and '1' in self.shifts:
+                    self.model.Add(self.work[emp.id, first_day, '1'] == 0)
+                if self.next_shifts.get(emp.id) == '1' and 'N' in self.shifts:
+                    self.model.Add(self.work[emp.id, last_day, 'N'] == 0)
+
     def add_smonto_consistent_constraint(self):
         """
         Hard Constraint: Il turno Smonto (S) può essere assegnato SOLO se il giorno prima c'era Notte (N).
@@ -131,11 +148,12 @@ class ConstraintsManager:
         if not self.days:
             return
 
-        # Giorno 0: impossibile verificare il giorno precedente -> vieta S
+        # Giorno 0: usa il turno storico se disponibile, altrimenti vieta S.
         if 'S' in self.shifts:
             day0_str = self.days[0].strftime("%Y-%m-%d")
             for emp in self.employees:
-                self.model.Add(self.work[emp.id, day0_str, 'S'] == 0)
+                if self.previous_shifts.get(emp.id) != 'N':
+                    self.model.Add(self.work[emp.id, day0_str, 'S'] == 0)
 
         # Itera dal secondo giorno in poi
         for i in range(1, len(self.days)):
@@ -164,13 +182,62 @@ class ConstraintsManager:
                     if 'N' in self.shifts:
                         self.model.Add(self.work[emp.id, date_str, 'N'] == 0)
 
-    def add_tripletta_constraint(self, objective_function, penalty_cost: int = 100):
+    def add_absence_request_requirement(self, requests: list):
+        """Vieta le assenze automatiche quando non esiste una richiesta approvata."""
+        from datetime import date
+
+        absence_types = {
+            'FERIE': 'F',
+            'MALATTIA': 'M',
+            '104': '104',
+            'PERMESSO': 'P',
+        }
+        approved = {'APPROVED', 'APPROVATO'}
+        emp_ids = {emp.id for emp in self.employees}
+        allowed = {}
+
+        for req in requests:
+            status = str(req.get('stato', '')).strip().upper()
+            if status not in approved:
+                continue
+            raw_type = str(req.get('tipo_richiesta', req.get('tipo', ''))).strip()
+            code = absence_types.get(raw_type.upper())
+            if code is None:
+                continue
+            emp_id = req.get('employee_id')
+            if emp_id not in emp_ids:
+                raise ValueError(f"La richiesta di assenza fa riferimento a un dipendente non attivo: {emp_id}.")
+            try:
+                start = date.fromisoformat(str(req['data_inizio']))
+                end = date.fromisoformat(str(req['data_fine']))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Intervallo date non valido nella richiesta di assenza: {req!r}.") from exc
+            if end < start:
+                raise ValueError(f"Intervallo invertito nella richiesta di assenza: {req!r}.")
+            for day in self.days:
+                if start <= day <= end:
+                    key = (emp_id, day.isoformat())
+                    if key in allowed and allowed[key] != code:
+                        raise ValueError(
+                            f"Richieste di assenza incompatibili per {emp_id} il {day.isoformat()}."
+                        )
+                    allowed[key] = code
+
+        for emp in self.employees:
+            for day in self.days:
+                day_key = day.isoformat()
+                for code in absence_types.values():
+                    if code in self.shifts and allowed.get((emp.id, day_key)) != code:
+                        self.model.Add(self.work[emp.id, day_key, code] == 0)
+
+    def add_tripletta_constraint(self, objective_function, penalty_cost: int = None):
         """
         Soft Constraint: Se il turno assegnato non rispetta la sequenza ideale, paga penalità.
         Sequenza ideale: 1 -> K -> N -> S -> R (Ciclo 5 giorni)
         Logic: Ideal shift dipende da (giorno_anno + offset_team) % 5
         Mapping: 0=1, 1=K, 2=N, 3=S, 4=R
         """
+        penalty_cost = self.config.tripletta_penalty if penalty_cost is None else penalty_cost
         # Mapping index to shift code
         cycle_map = {0: '1', 1: 'K', 2: 'N', 3: 'S', 4: 'R'}
         
@@ -185,7 +252,7 @@ class ConstraintsManager:
                 date_str = d.strftime("%Y-%m-%d")
                 # Calcolo indice ciclo relativo a CYCLE_ANCHOR_DATE (non all'ordinale assoluto).
                 # Il giorno 0 = CYCLE_ANCHOR_DATE corrisponde al turno '1' per il team 1.
-                day_index = ((d - CYCLE_ANCHOR_DATE).days + offset) % 5
+                day_index = ((d - self.config.cycle_anchor).days + offset) % 5
                 ideal_shift = cycle_map.get(day_index)
                 
                 if ideal_shift and ideal_shift in self.shifts:
@@ -201,7 +268,7 @@ class ConstraintsManager:
                     is_ideal_assigned = self.work[emp.id, date_str, ideal_shift]
                     objective_function.add_penalty(is_ideal_assigned.Not(), penalty_cost)
 
-    def add_request_constraints(self, requests: list):
+    def add_request_constraints(self, requests: list, objective_function=None, preference_penalty: int = 100):
         """
         Gestisce le richieste:
         - FERIE (F), MALATTIA (M), 104, LEGGE_104: Hard Constraint -> Assegna quel turno specifico.
@@ -219,44 +286,63 @@ class ConstraintsManager:
         
         # Mappa Tipo Richiesta -> Codice Turno
         # Assumiamo che se l'utente chiede "Mattina" vuole il turno '1'
-        type_to_shift = {
+        absence_types = {
             'FERIE': 'F',
             'MALATTIA': 'M',
             '104': '104',
             'PERMESSO': 'P',
-            # Preferenze Turno
-            'Mattina (Pref)': '1',
-            'Pomeriggio (Pref)': 'K',
-            'Notte (Pref)': 'N'
+        }
+        preferences = {
+            'MATTINA (PREF)': '1',
+            'POMERIGGIO (PREF)': 'K',
+            'NOTTE (PREF)': 'N',
         }
         
         # Set di emp_id validi nel solver per evitare KeyError su dipendenti non attivi
         valid_emp_ids = {emp.id for emp in self.employees}
 
         for req in requests:
-            emp_id = req['employee_id']
+            emp_id = req.get('employee_id')
 
             # Salta richieste di dipendenti non presenti nel solver (es. disattivati)
             if emp_id not in valid_emp_ids:
                 continue
 
+            if str(req.get('stato', '')).strip().upper() not in {'APPROVED', 'APPROVATO'}:
+                continue
+
             # Find dates
-            start = date.fromisoformat(req['data_inizio'])
-            end = date.fromisoformat(req['data_fine'])
+            try:
+                start = date.fromisoformat(str(req['data_inizio']))
+                end = date.fromisoformat(str(req['data_fine']))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Intervallo date non valido nella richiesta: {req!r}.") from exc
+            if end < start:
+                raise ValueError(f"Intervallo invertito nella richiesta: {req!r}.")
+            req_type = str(req.get('tipo_richiesta', req.get('tipo', ''))).strip().upper()
+            shift_code = absence_types.get(req_type)
+            preference_code = preferences.get(req_type)
+
+            if shift_code is None and preference_code is None:
+                raise ValueError(f"Tipo di richiesta non riconosciuto: {req_type!r}.")
+
+            if shift_code is not None and shift_code not in self.shifts:
+                raise ValueError(f"Il turno richiesto {shift_code!r} non è configurato.")
+            if preference_code is not None and preference_code not in self.shifts:
+                raise ValueError(f"La preferenza {req_type!r} non è configurata.")
 
             # Iterate days in solver range
             for d in self.days:
                 if start <= d <= end:
                     date_str = d.strftime("%Y-%m-%d")
-                    req_type = req['tipo_richiesta']
-
                     # 1. Gestione Assenze Codificate (Hard Constraint)
-                    if req_type in type_to_shift:
-                        forced_shift = type_to_shift[req_type]
-                        if forced_shift in self.shifts:
-                            self.model.Add(self.work[emp_id, date_str, forced_shift] == 1)
-                    
-                    # 2. Gestione Desiderata (Es. Note="M") - Placeholder
-                    # Se implementiamo desiderata specifici, qui andrebbe la logica.
+                    if shift_code is not None:
+                        self.model.Add(self.work[emp_id, date_str, shift_code] == 1)
+                    elif preference_code is not None:
+                        if objective_function is None:
+                            raise ValueError("Le preferenze richiedono un obiettivo per assegnare la penalità.")
+                        objective_function.add_penalty(
+                            self.work[emp_id, date_str, preference_code].Not(), preference_penalty
+                        )
 
 

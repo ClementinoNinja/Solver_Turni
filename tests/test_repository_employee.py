@@ -1,17 +1,25 @@
-import pytest
-import streamlit as st
+from unittest.mock import MagicMock, patch
+
 from src.database.repository import EmployeeRepository
 from src.models.employee import Employee
-from src.database.client import get_supabase_client
 
-# Integration test - Requires working DB connection
-def test_get_all_employees_integration():
-    try:
-        repo = EmployeeRepository()
-        
-        # Create a dummy employee for testing (cleanup later or rely on test db)
-        # For now, we just check if the query runs without error and returns list
-        employees = repo.get_all_employees()
-        assert isinstance(employees, list)
-    except Exception as e:
-        pytest.fail(f"Integration test failed: {e}")
+
+def test_get_all_employees_maps_database_rows_to_models():
+    row = {
+        "id": "employee-1",
+        "matricola": "MAT-1",
+        "nome_cognome": "Mario Rossi",
+        "ruolo": "INF",
+        "team_id": 2,
+        "limitazione_notte": False,
+        "attivo": True,
+    }
+    response = MagicMock(data=[row])
+    client = MagicMock()
+    client.table.return_value.select.return_value.eq.return_value.execute.return_value = response
+
+    with patch("src.database.repository.get_supabase_client", return_value=client):
+        employees = EmployeeRepository().get_all_employees()
+
+    assert employees == [Employee(**row)]
+    client.table.assert_called_once_with("employees")

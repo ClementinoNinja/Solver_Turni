@@ -1,9 +1,12 @@
 import streamlit as st
+from dataclasses import replace
 from datetime import date, timedelta
 import calendar
 from src.ui.state import AppState
 from src.engine.solver import ShiftSolver
 from src.database.repository import EmployeeRepository
+from src.engine.validation import validate_roster
+from src.engine.config import DEFAULT_SOLVER_CONFIG, SolverConfig
 
 def render_admin_view():
     st.header("Amministrazione - Generazione Turni")
@@ -23,7 +26,7 @@ def render_admin_view():
     
     # 2. Load Employees
     state = AppState()
-    if not state.load_employees_safe():
+    if not state.load_employees_safe(admin=True):
         return
     employees = state.employees
 
@@ -32,22 +35,151 @@ def render_admin_view():
         return
 
     st.metric("Dipendenti Attivi", len(employees))
+
+    repo = EmployeeRepository(admin=True)
+    try:
+        config = repo.get_solver_config()
+        config_persisted = True
+    except Exception as e:
+        config = DEFAULT_SOLVER_CONFIG
+        config_persisted = False
+        st.warning(f"Impostazioni predefinite in uso; applicare la migrazione scheduler per salvarle: {e}")
+
+    with st.expander("Configurazione solver", expanded=False):
+        with st.form("solver_configuration"):
+            st.caption("I valori iniziali mantengono le coperture già previste dall'applicazione.")
+            morning_cols = st.columns(4)
+            morning_coverage = (
+                (
+                    morning_cols[0].number_input("Mattina · alternativa 1 INF", 0, 50, config.morning_coverage_options[0][0]),
+                    morning_cols[1].number_input("Mattina · alternativa 1 OSS", 0, 50, config.morning_coverage_options[0][1]),
+                ),
+                (
+                    morning_cols[2].number_input("Mattina · alternativa 2 INF", 0, 50, config.morning_coverage_options[1][0]),
+                    morning_cols[3].number_input("Mattina · alternativa 2 OSS", 0, 50, config.morning_coverage_options[1][1]),
+                ),
+            )
+            evening_cols = st.columns(4)
+            evening_coverage = (
+                (
+                    evening_cols[0].number_input("Pomeriggio · alternativa 1 INF", 0, 50, config.evening_coverage_options[0][0]),
+                    evening_cols[1].number_input("Pomeriggio · alternativa 1 OSS", 0, 50, config.evening_coverage_options[0][1]),
+                ),
+                (
+                    evening_cols[2].number_input("Pomeriggio · alternativa 2 INF", 0, 50, config.evening_coverage_options[1][0]),
+                    evening_cols[3].number_input("Pomeriggio · alternativa 2 OSS", 0, 50, config.evening_coverage_options[1][1]),
+                ),
+            )
+            general_cols = st.columns(4)
+            night_min_inf = general_cols[0].number_input("Notte · minimo INF", 0, 50, config.night_min_inf)
+            night_min_oss = general_cols[1].number_input("Notte · minimo OSS", 0, 50, config.night_min_oss)
+            shift_capacity = general_cols[2].number_input("Capacità massima per turno", 1, 50, config.shift_capacity)
+            max_time = general_cols[3].number_input("Tempo massimo solver (secondi)", 1, 600, config.max_time_seconds)
+            penalty_cols = st.columns(4)
+            tripletta_penalty = penalty_cols[0].number_input("Peso ciclo ideale", 0, 10000, config.tripletta_penalty)
+            preference_penalty = penalty_cols[1].number_input("Peso preferenze", 0, 10000, config.preference_penalty)
+            hours_penalty = penalty_cols[2].number_input("Peso scostamento ore", 0, 10000, config.hours_deviation_penalty)
+            cycle_anchor = penalty_cols[3].date_input("Data di ancoraggio ciclo", value=config.cycle_anchor)
+            daily_target_hours = st.number_input(
+                "Ore teoriche per giorno lavorativo", min_value=0.25,
+                max_value=24.0, value=config.daily_target_hours, step=0.25,
+            )
+
+            if st.form_submit_button("Salva configurazione", disabled=not config_persisted):
+                try:
+                    new_config = SolverConfig(
+                        shift_capacity=shift_capacity,
+                        morning_coverage_options=morning_coverage,
+                        evening_coverage_options=evening_coverage,
+                        night_min_inf=night_min_inf,
+                        night_min_oss=night_min_oss,
+                        cycle_anchor=cycle_anchor,
+                        tripletta_penalty=tripletta_penalty,
+                        preference_penalty=preference_penalty,
+                        hours_deviation_penalty=hours_penalty,
+                        daily_target_hours=daily_target_hours,
+                        max_time_seconds=max_time,
+                    )
+                    repo.save_solver_config(new_config)
+                    st.success("Configurazione salvata.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Configurazione non salvata: {e}")
+
+    pending_draft = st.session_state.get("_roster_draft")
+    if (pending_draft and pending_draft["start"] == start_date.isoformat()
+            and pending_draft["end"] == days[-1].isoformat()):
+        st.subheader("Bozza pronta per la revisione")
+        st.caption(
+            f"Solver: {pending_draft['status']} · "
+            f"obiettivo: {pending_draft['obj_value']} · "
+            f"{len(pending_draft['entries'])} assegnazioni"
+        )
+        st.dataframe(pending_draft["entries"], use_container_width=True, hide_index=True)
+        confirm_col, cancel_col = st.columns(2)
+        if confirm_col.button("Pubblica calendario", type="primary"):
+            try:
+                repo.publish_roster_month(
+                    pending_draft["start"], pending_draft["end"],
+                    pending_draft["employee_ids"], pending_draft["expected"],
+                    pending_draft["entries"],
+                )
+                st.session_state.pop("_roster_draft", None)
+                st.success("Calendario pubblicato integralmente.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Pubblicazione non riuscita: {e}")
+        if cancel_col.button("Annulla bozza"):
+            st.session_state.pop("_roster_draft", None)
+            st.rerun()
     
     # 3. Request Input (Placeholder for future Sprint)
-    st.info("Regole Copertura (Sprint 7): M/P (2+2 o 3+1), Notte (2+1)")
+    st.info("Copertura prevista: mattina/pomeriggio (2+2 o 3+1), notte (2+1); target teorico 6 ore per giorno lavorativo, proporzionale al part-time.")
     
     # 4. Generate Action
     if st.button("GENERA TURNI", type="primary"):
         with st.spinner("L'algoritmo sta calcolando la soluzione ottimale..."):
             try:
-                repo = EmployeeRepository()
-
                 # Fetch Requests for the period
                 start_date_str = start_date.strftime("%Y-%m-%d")
                 end_date_str = (start_date + timedelta(days=num_days-1)).strftime("%Y-%m-%d")
                 requests = repo.get_requests(start_date_str, end_date_str)
+                expected_roster = [
+                    row for row in repo.get_roster_by_month(start_date_str, end_date_str)
+                    if row.get("employee_id") in {employee.id for employee in employees}
+                ]
 
-                solver = ShiftSolver(employees, days, requests=requests)
+                # Legge anche il contesto adiacente per i vincoli già esistenti
+                # e mantiene fissi i turni che il responsabile ha bloccato.
+                boundary_rows = repo.get_roster_by_month(
+                    (start_date - timedelta(days=1)).isoformat(),
+                    (start_date + timedelta(days=num_days)).isoformat(),
+                )
+                employee_ids = {employee.id for employee in employees}
+                locked_roster = [
+                    row for row in boundary_rows
+                    if row.get("is_locked")
+                    and row.get("employee_id") in employee_ids
+                    and start_date_str <= str(row.get("data", ""))[:10] <= end_date_str
+                ]
+                previous_shifts = {
+                    row["employee_id"]: row["shift_code"]
+                    for row in boundary_rows
+                    if str(row.get("data", ""))[:10] == (start_date - timedelta(days=1)).isoformat()
+                    and row.get("employee_id") in employee_ids
+                }
+                next_shifts = {
+                    row["employee_id"]: row["shift_code"]
+                    for row in boundary_rows
+                    if str(row.get("data", ""))[:10] == (start_date + timedelta(days=num_days)).isoformat()
+                    and row.get("employee_id") in employee_ids
+                }
+
+                solver = ShiftSolver(
+                    employees, days, requests=requests, locked_roster=locked_roster,
+                    previous_shifts=previous_shifts, next_shifts=next_shifts,
+                    config=config,
+                )
 
                 solver.add_hard_constraints()
                 solver.add_soft_constraints()
@@ -57,30 +189,48 @@ def render_admin_view():
                 st.write(f"**Status Algoritmo:** {stats['status']}")
                 st.write(f"Tempo: {stats['wall_time']:.2f}s, Rami esplorati: {stats['branches']}")
 
-                if solution:
-                    st.success(f"Soluzione trovata! Costo: {stats['obj_value']}")
-
-                    # Save to DB
-                    progress_bar = st.progress(0)
-                    for idx, entry in enumerate(solution):
-                        repo.save_roster_entry(
-                            entry['employee_id'],
-                            entry['data'],
-                            entry['shift_code']
+                if solution is not None:
+                    validation_errors = validate_roster(
+                        solution, employees, days, requests,
+                        previous_shifts=previous_shifts, next_shifts=next_shifts,
+                        config=solver.config,
+                    )
+                    if validation_errors:
+                        st.error("Il solver ha prodotto una bozza che non supera la verifica indipendente.")
+                        st.dataframe(
+                            {"Problema": validation_errors},
+                            use_container_width=True, hide_index=True,
                         )
-                        progress_bar.progress((idx + 1) / len(solution))
-
-                    st.balloons()
+                        return
+                    if stats["status"] == "OPTIMAL":
+                        st.success(f"Soluzione ottima trovata. Costo: {stats['obj_value']}")
+                    else:
+                        st.warning(
+                            f"Soluzione valida ma non è provato che sia ottima. "
+                            f"Costo: {stats['obj_value']}; limite: {stats['best_bound']}."
+                        )
+                    st.session_state["_roster_draft"] = {
+                        "start": start_date_str,
+                        "end": end_date_str,
+                        "employee_ids": [employee.id for employee in employees],
+                        "expected": expected_roster,
+                        "entries": solution,
+                        "status": stats["status"],
+                        "obj_value": stats["obj_value"],
+                        "best_bound": stats["best_bound"],
+                    }
+                    st.info("La soluzione è una bozza: controllala e pubblicala esplicitamente.")
+                    st.rerun()
                 else:
-                    st.error("Nessuna soluzione trovata! Rilassa i vincoli.")
-                    st.warning("""
-                    Possibili cause:
-                    1. Troppe richieste (Ferie/Malattia) in un singolo giorno.
-                    2. Vincoli di copertura troppo alti (es. 2 Notti con pochi dipendenti abilitati).
-                    3. Violazione riposi (es. Mattina dopo Notte forzata da preferenze).
-
-                    Prova a ridurre la copertura minima o rimuovere alcune preferenze.
-                    """)
+                    if stats["status"] == "INFEASIBLE":
+                        st.error("I vincoli e le richieste non consentono una soluzione per questo periodo.")
+                        st.info("Controlla coperture, assenze approvate, dipendenti abilitati e turni bloccati.")
+                    elif stats["status"] == "UNKNOWN":
+                        st.warning("Il solver ha raggiunto il limite di tempo senza determinare la fattibilità.")
+                    elif stats["status"] == "MODEL_INVALID":
+                        st.error("Il modello dei turni non è valido; controllare la configurazione e i dati.")
+                    else:
+                        st.error(f"Il solver non ha prodotto una soluzione: {stats['status']}.")
             except ValueError as ve:
                 st.error(f"Errore di configurazione: {ve}")
             except Exception as e:

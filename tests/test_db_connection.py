@@ -1,22 +1,20 @@
+import os
+
 import pytest
-from unittest.mock import MagicMock, patch
-from src.database.client import get_supabase_client
-import streamlit as st
+from supabase import create_client
+
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_SUPABASE_INTEGRATION") != "1",
+    reason="Test d'integrazione: richiede RUN_SUPABASE_INTEGRATION=1 e credenziali dedicate di test.",
+)
+
 
 def test_supabase_connection():
-    """
-    Test di integrazione per verificare la connessione a Supabase.
-    Richiede che secrets.toml sia configurato correttamente.
-    """
-    # Mocking st.secrets only if not available (to avoid failure in CI/CD without secrets)
-    # But for local dev it should fail if secrets are missing.
-    try:
-        client = get_supabase_client()
-        # Eseguiamo una query leggera per vedere se risponde
-        response = client.table("employees").select("count", count="exact").execute()
-        assert response is not None
-        print("Connection Successful!")
-    except KeyError:
-        pytest.fail("Secrets not found! Please configure .streamlit/secrets.toml")
-    except Exception as e:
-        pytest.fail(f"Connection failed: {str(e)}")
+    url = os.environ.get("SUPABASE_TEST_URL")
+    key = os.environ.get("SUPABASE_TEST_KEY")
+    if not url or not key:
+        pytest.fail("Impostare SUPABASE_TEST_URL e SUPABASE_TEST_KEY per il database di test.")
+
+    response = create_client(url, key).table("employees").select("id").limit(1).execute()
+    assert response is not None

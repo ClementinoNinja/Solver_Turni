@@ -1,4 +1,5 @@
 from ortools.sat.python import cp_model
+from src.utils.workload import credited_shift_hours, hours_to_solver_units
 
 class ObjectiveFunction:
     def __init__(self, model: cp_model.CpModel):
@@ -20,7 +21,8 @@ class ObjectiveFunction:
             # Se non ci sono penalità, basta trovare una soluzione (o minimizzare 0)
             self.model.Minimize(0)
 
-    def add_hours_balance_objective(self, employees, days, work, shifts, target_hours_map):
+    def add_hours_balance_objective(self, employees, days, work, shifts, target_hours_map,
+                                    penalty_cost: int = 5):
         """
         Soft Constraint: Minimizza la deviazione dal monte ore target mensile.
         Gestisce pesi decimali (es. 7.25) moltiplicando tutto per 100.
@@ -29,16 +31,17 @@ class ObjectiveFunction:
         
         for emp in employees:
             target_float = target_hours_map.get(emp.id, 156.0) 
-            target_scaled = int(target_float * SCALING_FACTOR)
+            from decimal import Decimal
+            target_scaled = hours_to_solver_units(Decimal(str(target_float)), SCALING_FACTOR)
             
             # Calcola ore assegnate (espressione lineare)
             assigned_hours_expr = []
             for d in days:
                 date_str = d.strftime("%Y-%m-%d")
-                for s_code, shift in shifts.items():
-                    if shift.weight > 0:
-                        # Converti peso float (es. 7.25) in int scalato (725)
-                        weight_scaled = int(shift.weight * SCALING_FACTOR)
+                for s_code in shifts:
+                    weight = credited_shift_hours(s_code, d, shifts)
+                    weight_scaled = hours_to_solver_units(weight, SCALING_FACTOR)
+                    if weight_scaled:
                         assigned_hours_expr.append(work[emp.id, date_str, s_code] * weight_scaled)
             
             total_hours_scaled = sum(assigned_hours_expr)
@@ -53,4 +56,4 @@ class ObjectiveFunction:
             
             # Penalità
             # Se lo scarto è 1 ora (100 punti), penalità 500.
-            self.penalties.append(abs_diff * 5)
+            self.penalties.append(abs_diff * penalty_cost)

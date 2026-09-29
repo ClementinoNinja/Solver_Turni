@@ -30,16 +30,16 @@ def _render_admin_login(key: str) -> bool:
     Mostra il campo password nella sidebar e gestisce la sessione admin.
     Restituisce True se l'utente è autenticato come admin.
     """
-    session_key = f"_admin_auth_{key}"
+    session_key = "_admin_auth"
 
     if st.session_state.get(session_key):
         st.sidebar.success("Admin Mode Attivo")
-        if st.sidebar.button("Logout", key=f"logout_{key}"):
+        if st.sidebar.button("Logout", key="logout_admin"):
             st.session_state[session_key] = False
             st.rerun()
         return True
 
-    pwd = st.sidebar.text_input("Password Admin", type="password", key=f"pwd_{key}")
+    pwd = st.sidebar.text_input("Password Admin", type="password", key="pwd_admin")
     if pwd:
         if _check_admin_password(pwd):
             st.session_state[session_key] = True

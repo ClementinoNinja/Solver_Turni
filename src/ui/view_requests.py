@@ -6,9 +6,9 @@ from src.ui.state import AppState
 def render_requests_view():
     st.header("Gestione Richieste & Assenze")
     
-    repo = EmployeeRepository()
+    repo = EmployeeRepository(admin=True)
     state = AppState()
-    if not state.load_employees_safe():
+    if not state.load_employees_safe(admin=True):
         return
     employees = state.employees
 

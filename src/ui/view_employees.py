@@ -6,7 +6,7 @@ from src.ui.state import AppState
 def render_employees_view():
     st.header("Gestione Dipendenti (Anagrafica)")
     
-    repo = EmployeeRepository()
+    repo = EmployeeRepository(admin=True)
     state = AppState()
     
     # 1. New Employee Form
@@ -18,6 +18,10 @@ def render_employees_view():
             ruolo = col1.selectbox("Ruolo", ["INF", "OSS"])
             team_id = col2.number_input("Team ID (1-50)", min_value=1, max_value=50, value=1)
             notte_lim = st.checkbox("Limitazione Notte")
+            contract_percentage = st.number_input(
+                "Part-time (%)", min_value=1.0, max_value=100.0,
+                value=100.0, step=1.0,
+            )
             
             if st.form_submit_button("Salva"):
                 if matricola and nome:
@@ -26,14 +30,15 @@ def render_employees_view():
                         nome_cognome=nome,
                         ruolo=ruolo,
                         team_id=team_id,
-                        limitazione_notte=notte_lim
+                        limitazione_notte=notte_lim,
+                        contract_percentage=contract_percentage,
                     )
                     try:
                         repo.create_employee(new_emp)
                         st.success(f"Dipendente {nome} creato con successo!")
                         # Force refresh
                         state.employees = [] # invalidate cache to reload
-                        state.load_employees()
+                        state.load_employees(admin=True)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Errore creazione: {e}")
@@ -42,7 +47,7 @@ def render_employees_view():
 
     # 2. List Employees (Editable)
     st.subheader("Elenco Dipendenti Attivi")
-    if not state.load_employees_safe():
+    if not state.load_employees_safe(admin=True):
         return
     employees = state.employees
     
@@ -63,7 +68,8 @@ def render_employees_view():
                 "Ruolo": e.ruolo,
                 "Team": e.team_id,
                 "Limitazione Notte": e.limitazione_notte,
-                "Attivo": e.attivo
+                "Attivo": e.attivo,
+                "Part-time (%)": e.contract_percentage,
             })
             
         # Display Data Editor
@@ -74,6 +80,7 @@ def render_employees_view():
                 "ID": st.column_config.TextColumn(disabled=True),
                 "Ruolo": st.column_config.SelectboxColumn(options=["INF", "OSS"]),
                 "Team": st.column_config.NumberColumn(min_value=1, max_value=50, step=1),
+                "Part-time (%)": st.column_config.NumberColumn(min_value=1, max_value=100, step=1),
             },
             key="employee_editor"
         )
@@ -113,6 +120,8 @@ def render_employees_view():
                         updates["limitazione_notte"] = row["Limitazione Notte"]
                     if row["Attivo"] != original["Attivo"]: 
                         updates["attivo"] = row["Attivo"]
+                    if row["Part-time (%)"] != original["Part-time (%)"]:
+                        updates["contract_percentage"] = float(row["Part-time (%)"])
                     
                     if updates:
                         repo.update_employee(row["ID"], updates)
@@ -122,37 +131,37 @@ def render_employees_view():
                 st.success(f"Aggiornati {changes_count} dipendenti!")
                 # Refresh
                 state.employees = []
-                state.load_employees()
+                state.load_employees(admin=True)
                 st.rerun()
             else:
                 st.info("Nessuna modifica rilevata.")
 
-    # 3. Elimina Dipendente
+    # 3. Disattiva Dipendente
     st.divider()
-    with st.expander("⚠️ Elimina Dipendente", expanded=False):
-        st.warning("Attenzione: l'eliminazione è irreversibile e potrebbe causare errori nei turni passati associati a questo dipendente.")
+    with st.expander("Disattiva Dipendente", expanded=False):
+        st.warning("La disattivazione impedisce nuovi turni e conserva richieste e turni già pubblicati.")
 
         if employees:
-            emp_map = {e.nome_cognome: e.id for e in employees}
-            emp_to_delete = st.selectbox("Seleziona Dipendente da Eliminare", list(emp_map.keys()))
+            emp_map = {f"{e.nome_cognome} · {e.matricola}": e.id for e in employees}
+            emp_to_delete = st.selectbox("Seleziona Dipendente da Disattivare", list(emp_map.keys()))
 
-            if st.button("Elimina Definitivamente", type="primary"):
+            if st.button("Disattiva Dipendente", type="primary"):
                 st.session_state["_pending_delete_emp"] = emp_map[emp_to_delete]
                 st.session_state["_pending_delete_name"] = emp_to_delete
 
             # Passo di conferma: appare solo dopo aver premuto il primo bottone
             if st.session_state.get("_pending_delete_emp"):
                 pending_name = st.session_state["_pending_delete_name"]
-                st.error(f"Sei sicuro di voler eliminare **{pending_name}**? Questa azione non può essere annullata.")
+                st.error(f"Confermi la disattivazione di {pending_name}?")
                 col_yes, col_no = st.columns(2)
-                if col_yes.button("Sì, elimina definitivamente", type="primary", key="confirm_delete_emp"):
+                if col_yes.button("Conferma disattivazione", type="primary", key="confirm_delete_emp"):
                     try:
                         repo.delete_employee(st.session_state["_pending_delete_emp"])
-                        st.success(f"Dipendente {pending_name} eliminato con successo!")
+                        st.success(f"Dipendente {pending_name} disattivato.")
                         st.session_state.pop("_pending_delete_emp", None)
                         st.session_state.pop("_pending_delete_name", None)
                         state.employees = []
-                        state.load_employees()
+                        state.load_employees(admin=True)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Errore durante l'eliminazione: {e}")

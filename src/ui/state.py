@@ -17,22 +17,22 @@ class AppState:
         if 'roster_cache' not in st.session_state:
             st.session_state.roster_cache = None
 
-    def load_employees(self):
+    def load_employees(self, admin: bool = False):
         """Carica i dipendenti dal DB solo se la lista è vuota."""
         if not st.session_state.employees:
-            repo = EmployeeRepository()
+            repo = EmployeeRepository(admin=admin)
             try:
                 st.session_state.employees = repo.get_all_employees()
             except Exception as e:
                 st.error(f"Errore caricamento dipendenti: {e}")
 
-    def load_employees_safe(self) -> bool:
+    def load_employees_safe(self, admin: bool = False) -> bool:
         """
         Carica i dipendenti con gestione errore.
         Restituisce True se il caricamento è riuscito, False altrimenti.
         """
         if not st.session_state.employees:
-            repo = EmployeeRepository()
+            repo = EmployeeRepository(admin=admin)
             try:
                 st.session_state.employees = repo.get_all_employees()
             except Exception as e:

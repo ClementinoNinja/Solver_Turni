@@ -5,7 +5,7 @@ import pytest
 from datetime import date
 from src.engine.solver import ShiftSolver
 from src.models.employee import Employee
-from src.models.shift import Shift
+from src.models.shift import SHIFT_DEFINITIONS, Shift
 from ortools.sat.python import cp_model
 
 def test_decimal_precision():
@@ -21,8 +21,11 @@ def test_decimal_precision():
     # If we add 'A' to shifts AFTER init, self.work doesn't have it.
     # So we must use existing keys '1', 'K' but change properties.
     
-    solver.shifts['1'] = Shift('1', 7.25, False, 'Decimale')
-    solver.shifts['K'] = Shift('K', 7.00, False, 'Intero')
+    shifts = dict(solver.shifts)
+    shifts['1'] = Shift('1', 7.25, False, 'Decimale')
+    shifts['K'] = Shift('K', 7.00, False, 'Intero')
+    solver.shifts = shifts
+    solver.constraints_manager.shifts = shifts
     
     # We relax all hard constraints that might use other shifts or logic
     # We only use "One Shift Per Day" which iterates over solver.shifts keys.
