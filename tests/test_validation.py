@@ -32,3 +32,30 @@ def test_validation_rejects_an_unrequested_absence():
         [day],
     )
     assert any("Assenza senza richiesta approvata" in error for error in errors)
+
+
+def test_validation_rejects_three_consecutive_nights_across_month_boundary():
+    employee = Employee(id="employee-1")
+    days = [date(2026, 1, 1)]
+    entries = [
+        {"employee_id": employee.id, "data": days[0].isoformat(), "shift_code": "N"}
+    ]
+    errors = validate_roster(
+        entries, [employee], days,
+        previous_shifts={employee.id: ["N", "N"]},
+    )
+    assert any("notti consecutive" in error for error in errors)
+
+
+def test_validation_rejects_three_nights_ending_in_next_month():
+    employee = Employee(id="employee-1")
+    days = [date(2026, 1, 1), date(2026, 1, 2)]
+    entries = [
+        {"employee_id": employee.id, "data": day.isoformat(), "shift_code": "N"}
+        for day in days
+    ]
+    errors = validate_roster(
+        entries, [employee], days,
+        next_shifts={employee.id: ["N"]},
+    )
+    assert any("notti consecutive" in error for error in errors)

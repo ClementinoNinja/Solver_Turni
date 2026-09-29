@@ -13,7 +13,9 @@ class SolverConfig:
     night_min_inf: int = 2
     night_min_oss: int = 1
     cycle_anchor: date = date(2026, 1, 5)
-    tripletta_penalty: int = 100
+    cycle_transition_penalty: int = 1500
+    night_balance_penalty: int = 20
+    max_consecutive_nights: int = 2
     preference_penalty: int = 100
     hours_deviation_penalty: int = 5
     daily_target_hours: float = 6.0
@@ -28,8 +30,11 @@ class SolverConfig:
             raise ValueError("Il limite di calcolo deve essere almeno un secondo.")
         if not 0 < self.daily_target_hours <= 24:
             raise ValueError("Le ore teoriche per giorno lavorativo devono essere tra 0 e 24.")
-        if self.tripletta_penalty < 0 or self.preference_penalty < 0:
+        if (self.cycle_transition_penalty < 0 or self.night_balance_penalty < 0
+                or self.preference_penalty < 0):
             raise ValueError("Le penalità non possono essere negative.")
+        if self.max_consecutive_nights < 1:
+            raise ValueError("max_consecutive_nights deve essere almeno 1.")
         for options in (self.morning_coverage_options, self.evening_coverage_options):
             if (len(options) != 2 or any(len(option) != 2 for option in options)
                     or any(inf < 0 or oss < 0 or inf + oss == 0 for inf, oss in options)):

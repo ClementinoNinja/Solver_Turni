@@ -76,10 +76,15 @@ def render_admin_view():
             shift_capacity = general_cols[2].number_input("Capacità massima per turno", 1, 50, config.shift_capacity)
             max_time = general_cols[3].number_input("Tempo massimo solver (secondi)", 1, 600, config.max_time_seconds)
             penalty_cols = st.columns(4)
-            tripletta_penalty = penalty_cols[0].number_input("Peso ciclo ideale", 0, 10000, config.tripletta_penalty)
-            preference_penalty = penalty_cols[1].number_input("Peso preferenze", 0, 10000, config.preference_penalty)
-            hours_penalty = penalty_cols[2].number_input("Peso scostamento ore", 0, 10000, config.hours_deviation_penalty)
-            cycle_anchor = penalty_cols[3].date_input("Data di ancoraggio ciclo", value=config.cycle_anchor)
+            cycle_penalty = penalty_cols[0].number_input(
+                "Peso successione turni", 0, 10000, config.cycle_transition_penalty
+            )
+            night_balance_penalty = penalty_cols[1].number_input(
+                "Peso equita notti", 0, 10000, config.night_balance_penalty
+            )
+            preference_penalty = penalty_cols[2].number_input("Peso preferenze", 0, 10000, config.preference_penalty)
+            hours_penalty = penalty_cols[3].number_input("Peso scostamento ore", 0, 10000, config.hours_deviation_penalty)
+            st.caption("Vincolo rigido: massimo 2 notti consecutive; ciclo preferito 1 -> K -> N -> S -> R.")
             daily_target_hours = st.number_input(
                 "Ore teoriche per giorno lavorativo", min_value=0.25,
                 max_value=24.0, value=config.daily_target_hours, step=0.25,
@@ -93,8 +98,8 @@ def render_admin_view():
                         evening_coverage_options=evening_coverage,
                         night_min_inf=night_min_inf,
                         night_min_oss=night_min_oss,
-                        cycle_anchor=cycle_anchor,
-                        tripletta_penalty=tripletta_penalty,
+                        cycle_transition_penalty=cycle_penalty,
+                        night_balance_penalty=night_balance_penalty,
                         preference_penalty=preference_penalty,
                         hours_deviation_penalty=hours_penalty,
                         daily_target_hours=daily_target_hours,
@@ -115,6 +120,19 @@ def render_admin_view():
             f"obiettivo: {pending_draft['obj_value']} · "
             f"{len(pending_draft['entries'])} assegnazioni"
         )
+        night_counts = {}
+        for entry in pending_draft["entries"]:
+            if entry.get("shift_code") == "N":
+                employee_id = entry.get("employee_id")
+                night_counts[employee_id] = night_counts.get(employee_id, 0) + 1
+        st.caption("Distribuzione notti per dipendente")
+        st.dataframe([
+            {
+                "Dipendente": f"{employee.nome_cognome} · {employee.matricola}",
+                "Notti": night_counts.get(employee.id, 0),
+            }
+            for employee in employees
+        ], use_container_width=True, hide_index=True)
         st.dataframe(pending_draft["entries"], use_container_width=True, hide_index=True)
         confirm_col, cancel_col = st.columns(2)
         if confirm_col.button("Pubblica calendario", type="primary"):
@@ -152,8 +170,8 @@ def render_admin_view():
                 # Legge anche il contesto adiacente per i vincoli già esistenti
                 # e mantiene fissi i turni che il responsabile ha bloccato.
                 boundary_rows = repo.get_roster_by_month(
-                    (start_date - timedelta(days=1)).isoformat(),
-                    (start_date + timedelta(days=num_days)).isoformat(),
+                    (start_date - timedelta(days=2)).isoformat(),
+                    (start_date + timedelta(days=num_days + 1)).isoformat(),
                 )
                 employee_ids = {employee.id for employee in employees}
                 locked_roster = [
@@ -162,17 +180,21 @@ def render_admin_view():
                     and row.get("employee_id") in employee_ids
                     and start_date_str <= str(row.get("data", ""))[:10] <= end_date_str
                 ]
+                boundary_by_key = {
+                    (row["employee_id"], str(row.get("data", ""))[:10]): row["shift_code"]
+                    for row in boundary_rows if row.get("employee_id") in employee_ids
+                }
                 previous_shifts = {
-                    row["employee_id"]: row["shift_code"]
-                    for row in boundary_rows
-                    if str(row.get("data", ""))[:10] == (start_date - timedelta(days=1)).isoformat()
-                    and row.get("employee_id") in employee_ids
+                    employee_id: [
+                        boundary_by_key.get((employee_id, (start_date - timedelta(days=offset)).isoformat()))
+                        for offset in (2, 1)
+                    ] for employee_id in employee_ids
                 }
                 next_shifts = {
-                    row["employee_id"]: row["shift_code"]
-                    for row in boundary_rows
-                    if str(row.get("data", ""))[:10] == (start_date + timedelta(days=num_days)).isoformat()
-                    and row.get("employee_id") in employee_ids
+                    employee_id: [
+                        boundary_by_key.get((employee_id, (start_date + timedelta(days=num_days + offset)).isoformat()))
+                        for offset in (0, 1)
+                    ] for employee_id in employee_ids
                 }
 
                 solver = ShiftSolver(
@@ -224,7 +246,7 @@ def render_admin_view():
                 else:
                     if stats["status"] == "INFEASIBLE":
                         st.error("I vincoli e le richieste non consentono una soluzione per questo periodo.")
-                        st.info("Controlla coperture, assenze approvate, dipendenti abilitati e turni bloccati.")
+                        st.info("Controlla coperture, assenze approvate, turni bloccati e limite di 2 notti consecutive.")
                     elif stats["status"] == "UNKNOWN":
                         st.warning("Il solver ha raggiunto il limite di tempo senza determinare la fattibilità.")
                     elif stats["status"] == "MODEL_INVALID":

@@ -18,6 +18,8 @@ Liberare i coordinatori infermieristici dall'incubo dei fogli Excel e dei calcol
 
 The public calendar reads from the `roster_calendar` view, which returns `ASS` for every absence code; detailed codes and requests require the server-side admin client. Employee contract percentages and solver settings require the migration above. The migration is not applied automatically.
 
+The solver treats the sequence `1 -> K -> N -> S -> R` as a preference, balances night duties by role, contract percentage and availability, and enforces a hard maximum of two consecutive nights, including known shifts across month boundaries.
+
 ## Tests
 
 Run local tests with `pytest`. They use synthetic data and mocks; Supabase integration tests are skipped unless explicitly enabled with `RUN_SUPABASE_INTEGRATION=1`, `SUPABASE_TEST_URL`, and `SUPABASE_TEST_KEY` pointing to a dedicated test project.

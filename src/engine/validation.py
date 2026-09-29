@@ -6,6 +6,14 @@ from datetime import date
 from src.engine.config import DEFAULT_SOLVER_CONFIG
 
 
+def _shift_history(value):
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
 def validate_roster(entries, employees, days, requests=(), previous_shifts=None,
                     next_shifts=None, config=DEFAULT_SOLVER_CONFIG,
                     additional_coverage_entries=(), additional_employee_roles=None):
@@ -86,20 +94,50 @@ def validate_roster(entries, employees, days, requests=(), previous_shifts=None,
     additional_employee_roles = additional_employee_roles or {}
     for employee in employees:
         employee_days = sorted(days)
+        previous_history = _shift_history(previous_shifts.get(employee.id))
+        next_history = _shift_history(next_shifts.get(employee.id))
         for index, day in enumerate(employee_days):
             code = schedule.get((employee.id, day.isoformat()))
             yesterday = employee_days[index - 1].isoformat() if index else None
-            yesterday_code = schedule.get((employee.id, yesterday)) if yesterday else previous_shifts.get(employee.id)
+            yesterday_code = schedule.get((employee.id, yesterday)) if yesterday else (
+                previous_history[-1] if previous_history else None
+            )
             if code == "S" and yesterday_code != "N":
                 errors.append(f"Smonto senza notte precedente per {employee.id} il {day.isoformat()}.")
             if yesterday_code == "N" and code == "1":
                 errors.append(f"Mattina dopo notte per {employee.id} il {day.isoformat()}.")
         last_code = schedule.get((employee.id, employee_days[-1].isoformat())) if employee_days else None
-        if last_code == "N" and next_shifts.get(employee.id) == "1":
+        if last_code == "N" and next_history and next_history[0] == "1":
             errors.append(f"Notte seguita da mattina nel periodo successivo per {employee.id}.")
         first_code = schedule.get((employee.id, employee_days[0].isoformat())) if employee_days else None
-        if previous_shifts.get(employee.id) == "N" and first_code == "1":
+        if previous_history and previous_history[-1] == "N" and first_code == "1":
             errors.append(f"Mattina dopo notte nel periodo precedente per {employee.id}.")
+
+        night_run = 0
+        for code in reversed(previous_history):
+            if code != "N":
+                break
+            night_run += 1
+        for day in employee_days:
+            if schedule.get((employee.id, day.isoformat())) == "N":
+                night_run += 1
+                if night_run > config.max_consecutive_nights:
+                    errors.append(
+                        f"Piu di {config.max_consecutive_nights} notti consecutive per "
+                        f"{employee.id} il {day.isoformat()}."
+                    )
+            else:
+                night_run = 0
+        for index, code in enumerate(next_history):
+            if code != "N":
+                break
+            night_run += 1
+            if night_run > config.max_consecutive_nights:
+                errors.append(
+                    f"Piu di {config.max_consecutive_nights} notti consecutive nel periodo successivo "
+                    f"per {employee.id}."
+                )
+                break
 
     for day in days:
         counts = defaultdict(lambda: [0, 0])

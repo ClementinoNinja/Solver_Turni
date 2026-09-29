@@ -13,6 +13,14 @@ class ConstraintsManager:
         self.next_shifts = next_shifts or {}
         self.config = config or DEFAULT_SOLVER_CONFIG
 
+    @staticmethod
+    def _shift_history(value):
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+
     def add_locked_shift_constraints(self):
         """Mantiene fisse le assegnazioni che il responsabile ha bloccato."""
         valid_emp_ids = {emp.id for emp in self.employees}
@@ -130,10 +138,11 @@ class ConstraintsManager:
             first_day = self.days[0].isoformat()
             last_day = self.days[-1].isoformat()
             for emp in self.employees:
-                previous = self.previous_shifts.get(emp.id)
-                if previous == 'N' and '1' in self.shifts:
+                previous = self._shift_history(self.previous_shifts.get(emp.id))
+                following = self._shift_history(self.next_shifts.get(emp.id))
+                if previous and previous[-1] == 'N' and '1' in self.shifts:
                     self.model.Add(self.work[emp.id, first_day, '1'] == 0)
-                if self.next_shifts.get(emp.id) == '1' and 'N' in self.shifts:
+                if following and following[0] == '1' and 'N' in self.shifts:
                     self.model.Add(self.work[emp.id, last_day, 'N'] == 0)
 
     def add_smonto_consistent_constraint(self):
@@ -152,7 +161,8 @@ class ConstraintsManager:
         if 'S' in self.shifts:
             day0_str = self.days[0].strftime("%Y-%m-%d")
             for emp in self.employees:
-                if self.previous_shifts.get(emp.id) != 'N':
+                previous = self._shift_history(self.previous_shifts.get(emp.id))
+                if not previous or previous[-1] != 'N':
                     self.model.Add(self.work[emp.id, day0_str, 'S'] == 0)
 
         # Itera dal secondo giorno in poi
@@ -169,6 +179,31 @@ class ConstraintsManager:
                     self.model.Add(
                         self.work[emp.id, today_str, 'S'] <= self.work[emp.id, yesterday_str, 'N']
                     )
+
+    def add_max_consecutive_nights_constraint(self):
+        """Vieta sequenze di notti oltre il limite, includendo il confine mensile noto."""
+        if 'N' not in self.shifts or not self.days:
+            return
+
+        limit = self.config.max_consecutive_nights
+        for emp in self.employees:
+            before = self._shift_history(self.previous_shifts.get(emp.id))[-limit:]
+            after = self._shift_history(self.next_shifts.get(emp.id))[:limit]
+            tokens = [(False, code == 'N') for code in before]
+            tokens.extend(
+                (True, self.work[emp.id, day.isoformat(), 'N'])
+                for day in self.days
+            )
+            tokens.extend((False, code == 'N') for code in after)
+
+            window_size = limit + 1
+            for start in range(max(0, len(tokens) - window_size + 1)):
+                window = tokens[start:start + window_size]
+                if not any(is_variable for is_variable, _ in window):
+                    continue
+                fixed_nights = sum(value for is_variable, value in window if not is_variable)
+                night_vars = [value for is_variable, value in window if is_variable]
+                self.model.Add(sum(night_vars) + fixed_nights <= limit)
 
     def add_night_limitation_constraint(self):
         """
@@ -230,43 +265,70 @@ class ConstraintsManager:
                     if code in self.shifts and allowed.get((emp.id, day_key)) != code:
                         self.model.Add(self.work[emp.id, day_key, code] == 0)
 
-    def add_tripletta_constraint(self, objective_function, penalty_cost: int = None):
-        """
-        Soft Constraint: Se il turno assegnato non rispetta la sequenza ideale, paga penalità.
-        Sequenza ideale: 1 -> K -> N -> S -> R (Ciclo 5 giorni)
-        Logic: Ideal shift dipende da (giorno_anno + offset_team) % 5
-        Mapping: 0=1, 1=K, 2=N, 3=S, 4=R
-        """
-        penalty_cost = self.config.tripletta_penalty if penalty_cost is None else penalty_cost
-        # Mapping index to shift code
-        cycle_map = {0: '1', 1: 'K', 2: 'N', 3: 'S', 4: 'R'}
-        
-        for emp in self.employees:
-            if emp.team_id is None:
-                continue # Skip employees without team/tripletta
-            
-            # Offset basato su team_id: team 1 -> offset 0, team 2 -> offset 1, etc.
-            offset = (emp.team_id - 1) % 5
+    def add_cycle_transition_objective(self, objective_function, penalty_cost: int = None):
+        """Premia la successione effettiva 1 -> K -> N -> S -> R -> 1."""
+        cycle = ("1", "K", "N", "S", "R")
+        successor = {cycle[index]: cycle[(index + 1) % len(cycle)] for index in range(len(cycle))}
+        penalty_cost = (self.config.cycle_transition_penalty
+                        if penalty_cost is None else penalty_cost)
+        if penalty_cost <= 0 or not self.days:
+            return
 
-            for d in self.days:
-                date_str = d.strftime("%Y-%m-%d")
-                # Calcolo indice ciclo relativo a CYCLE_ANCHOR_DATE (non all'ordinale assoluto).
-                # Il giorno 0 = CYCLE_ANCHOR_DATE corrisponde al turno '1' per il team 1.
-                day_index = ((d - self.config.cycle_anchor).days + offset) % 5
-                ideal_shift = cycle_map.get(day_index)
-                
-                if ideal_shift and ideal_shift in self.shifts:
-                    # Se il dipendente NON fa il turno ideale, paga penalità.
-                    # BoolVar: is_not_ideal
-                    # is_not_ideal = 1 - work[emp, date, ideal]
-                    # Ma work è 1 se lavora quel turno.
-                    # Quindi penalty applicata se work[..., ideal] è 0.
-                    # Oppure, penalty applicata per ogni turno diverso assegnato? 
-                    # Meglio: Reward se segue, Costo se non segue.
-                    # Qui usiamo Penalità: Costo se work[ideal] == 0  => (1 - work[ideal]) * cost
-                    
-                    is_ideal_assigned = self.work[emp.id, date_str, ideal_shift]
-                    objective_function.add_penalty(is_ideal_assigned.Not(), penalty_cost)
+        def penalize_variable_pair(employee, previous_day, current_day):
+            previous_vars = {code: self.work[employee.id, previous_day, code] for code in cycle}
+            current_vars = {code: self.work[employee.id, current_day, code] for code in cycle}
+            previous_regular = sum(previous_vars.values())
+            current_regular = sum(current_vars.values())
+            active = self.model.NewBoolVar(f"cycle_active_{employee.id}_{previous_day}_{current_day}")
+            self.model.Add(active <= previous_regular)
+            self.model.Add(active <= current_regular)
+            self.model.Add(active >= previous_regular + current_regular - 1)
+
+            expected_transitions = []
+            for previous_code in cycle:
+                expected_var = self.model.NewBoolVar(
+                    f"cycle_match_{employee.id}_{previous_day}_{current_day}_{previous_code}"
+                )
+                previous_var = previous_vars[previous_code]
+                current_var = current_vars[successor[previous_code]]
+                self.model.Add(expected_var <= previous_var)
+                self.model.Add(expected_var <= current_var)
+                self.model.Add(expected_var >= previous_var + current_var - 1)
+                expected_transitions.append(expected_var)
+
+            bad = self.model.NewBoolVar(f"cycle_break_{employee.id}_{previous_day}_{current_day}")
+            self.model.Add(bad == active - sum(expected_transitions))
+            objective_function.add_penalty(bad, penalty_cost)
+
+        for employee in self.employees:
+            previous_history = self._shift_history(self.previous_shifts.get(employee.id))
+            first_day = self.days[0].isoformat()
+            if previous_history and previous_history[-1] in cycle:
+                expected = successor[previous_history[-1]]
+                for code in cycle:
+                    if code != expected:
+                        objective_function.add_penalty(
+                            self.work[employee.id, first_day, code], penalty_cost
+                        )
+
+            for index in range(1, len(self.days)):
+                previous_day = self.days[index - 1].isoformat()
+                current_day = self.days[index].isoformat()
+                penalize_variable_pair(employee, previous_day, current_day)
+
+            next_history = self._shift_history(self.next_shifts.get(employee.id))
+            if next_history and next_history[0] in cycle:
+                last_day = self.days[-1].isoformat()
+                next_code = next_history[0]
+                for code in cycle:
+                    if successor[code] != next_code:
+                        objective_function.add_penalty(
+                            self.work[employee.id, last_day, code], penalty_cost
+                        )
+
+    def add_tripletta_constraint(self, objective_function, penalty_cost: int = None):
+        """Compatibilità per chiamanti legacy: usa ora la successione effettiva."""
+        return self.add_cycle_transition_objective(objective_function, penalty_cost)
 
     def add_request_constraints(self, requests: list, objective_function=None, preference_penalty: int = 100):
         """

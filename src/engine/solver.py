@@ -47,6 +47,7 @@ class ShiftSolver:
         self.constraints_manager.add_max_shift_capacity()
         self.constraints_manager.add_no_morning_after_night()
         self.constraints_manager.add_smonto_consistent_constraint()
+        self.constraints_manager.add_max_consecutive_nights_constraint()
         self.constraints_manager.add_night_limitation_constraint()
         # Apply requests constraints
         if self.requests:
@@ -57,7 +58,7 @@ class ShiftSolver:
 
     def add_soft_constraints(self):
         # Parametri penalità hardcoded per ora o passati come argomenti
-        self.constraints_manager.add_tripletta_constraint(self.objective_function)
+        self.constraints_manager.add_cycle_transition_objective(self.objective_function)
         
         # Balance Hours Objective (Sprint 7.3)
         # Calculate target for this specific month
@@ -79,6 +80,10 @@ class ShiftSolver:
             self.objective_function.add_hours_balance_objective(
                 self.employees, self.days, self.work, self.shifts, target_map,
                 penalty_cost=self.config.hours_deviation_penalty,
+            )
+            self.objective_function.add_night_balance_objective(
+                self.employees, self.days, self.work, self.requests, self.locked_roster,
+                penalty_cost=self.config.night_balance_penalty,
             )
         
         # Finalize objective

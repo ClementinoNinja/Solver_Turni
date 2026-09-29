@@ -174,16 +174,25 @@ def render_roster_view(is_admin: bool = False):
 
                 requests = repo.get_requests(start_date.isoformat(), end_date.isoformat())
                 boundary_rows = repo.get_roster_by_month(
-                    (start_date - timedelta(days=1)).isoformat(),
-                    (end_date + timedelta(days=1)).isoformat(),
+                    (start_date - timedelta(days=2)).isoformat(),
+                    (end_date + timedelta(days=2)).isoformat(),
                 )
+                boundary_by_key = {
+                    (row["employee_id"], str(row.get("data", ""))[:10]): row["shift_code"]
+                    for row in boundary_rows
+                }
+                context_employee_ids = {emp.id for emp in active_employees}
                 previous_shifts = {
-                    row["employee_id"]: row["shift_code"] for row in boundary_rows
-                    if str(row.get("data", ""))[:10] == (start_date - timedelta(days=1)).isoformat()
+                    employee_id: [
+                        boundary_by_key.get((employee_id, (start_date - timedelta(days=offset)).isoformat()))
+                        for offset in (2, 1)
+                    ] for employee_id in context_employee_ids
                 }
                 next_shifts = {
-                    row["employee_id"]: row["shift_code"] for row in boundary_rows
-                    if str(row.get("data", ""))[:10] == (end_date + timedelta(days=1)).isoformat()
+                    employee_id: [
+                        boundary_by_key.get((employee_id, (end_date + timedelta(days=offset)).isoformat()))
+                        for offset in (1, 2)
+                    ] for employee_id in context_employee_ids
                 }
                 errors = validate_roster(
                     entries, active_employees, days, requests,
